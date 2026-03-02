@@ -1,0 +1,16 @@
+--- DRAWER LOGS WITH CASHIER ID ---
+{'id': 1, 'cashier_id': 2, 'status': 'Closed', 'opening_date': datetime.datetime(2026, 1, 21, 13, 34, 33)}
+{'id': 2, 'cashier_id': 1, 'status': 'Open', 'opening_date': datetime.datetime(2026, 1, 21, 23, 58, 34)}
+
+--- USERS ---
+{'id': 1, 'name': 'عبدالقادر طارق'}
+{'id': 2, 'name': 'عبدالقادر'}
+{'id': 3, 'name': 'محمد طارق'}
+{'id': 4, 'name': 'طارق عبدالقادر'}
+
+--- RECENT INVOICES WITH CASHIER AND DRAWER ---
+{'id': 7, 'invoice_number': 'INV-20260122002613', 'cashier_id': 2, 'drawer_id': 1, 'total_amount': Decimal('0.00')}
+{'id': 6, 'invoice_number': 'INV-20260122000902', 'cashier_id': 2, 'drawer_id': 1, 'total_amount': Decimal('0.00')}
+{'id': 5, 'invoice_number': 'INV-20260121152346', 'cashier_id': 2, 'drawer_id': None, 'total_amount': Decimal('0.00')}
+{'id': 4, 'invoice_number': 'INV-20260121152308', 'cashier_id': 2, 'drawer_id': None, 'total_amount': Decimal('0.00')}
+{'id': 3, 'invoice_number': 'INV-20260121152241', 'cashier_id': 2, 'drawer_id': None, 'total_amount': Decimal('0.00')}

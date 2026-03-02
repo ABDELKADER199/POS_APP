@@ -1,0 +1,20 @@
+--- INVOICE ITEMS FOR ID 7 ---
+{'id': 29, 'invoice_id': 7, 'product_id': 1, 'quantity': 1, 'unit_price': Decimal('32.00'), 'discount': Decimal('0.00'), 'total_price': Decimal('32.00'), 'notes': None, 'created_at': datetime.datetime(2026, 1, 22, 0, 26, 13)}
+{'id': 30, 'invoice_id': 7, 'product_id': 17, 'quantity': 1, 'unit_price': Decimal('35.00'), 'discount': Decimal('0.00'), 'total_price': Decimal('35.00'), 'notes': None, 'created_at': datetime.datetime(2026, 1, 22, 0, 26, 13)}
+{'id': 31, 'invoice_id': 7, 'product_id': 6, 'quantity': 1, 'unit_price': Decimal('24.00'), 'discount': Decimal('0.00'), 'total_price': Decimal('24.00'), 'notes': None, 'created_at': datetime.datetime(2026, 1, 22, 0, 26, 13)}
+{'id': 32, 'invoice_id': 7, 'product_id': 20, 'quantity': 1, 'unit_price': Decimal('48.00'), 'discount': Decimal('0.00'), 'total_price': Decimal('48.00'), 'notes': None, 'created_at': datetime.datetime(2026, 1, 22, 0, 26, 13)}
+
+--- ALL INVOICE ITEMS (Last 10) ---
+{'id': 32, 'invoice_id': 7, 'product_id': 20, 'quantity': 1, 'unit_price': Decimal('48.00'), 'discount': Decimal('0.00'), 'total_price': Decimal('48.00'), 'notes': None, 'created_at': datetime.datetime(2026, 1, 22, 0, 26, 13)}
+{'id': 31, 'invoice_id': 7, 'product_id': 6, 'quantity': 1, 'unit_price': Decimal('24.00'), 'discount': Decimal('0.00'), 'total_price': Decimal('24.00'), 'notes': None, 'created_at': datetime.datetime(2026, 1, 22, 0, 26, 13)}
+{'id': 30, 'invoice_id': 7, 'product_id': 17, 'quantity': 1, 'unit_price': Decimal('35.00'), 'discount': Decimal('0.00'), 'total_price': Decimal('35.00'), 'notes': None, 'created_at': datetime.datetime(2026, 1, 22, 0, 26, 13)}
+{'id': 29, 'invoice_id': 7, 'product_id': 1, 'quantity': 1, 'unit_price': Decimal('32.00'), 'discount': Decimal('0.00'), 'total_price': Decimal('32.00'), 'notes': None, 'created_at': datetime.datetime(2026, 1, 22, 0, 26, 13)}
+{'id': 28, 'invoice_id': 6, 'product_id': 35, 'quantity': 1, 'unit_price': Decimal('25.00'), 'discount': Decimal('0.00'), 'total_price': Decimal('25.00'), 'notes': None, 'created_at': datetime.datetime(2026, 1, 22, 0, 9, 2)}
+{'id': 27, 'invoice_id': 6, 'product_id': 26, 'quantity': 1, 'unit_price': Decimal('5.00'), 'discount': Decimal('0.00'), 'total_price': Decimal('5.00'), 'notes': None, 'created_at': datetime.datetime(2026, 1, 22, 0, 9, 2)}
+{'id': 26, 'invoice_id': 6, 'product_id': 31, 'quantity': 1, 'unit_price': Decimal('65.00'), 'discount': Decimal('0.00'), 'total_price': Decimal('65.00'), 'notes': None, 'created_at': datetime.datetime(2026, 1, 22, 0, 9, 2)}
+{'id': 25, 'invoice_id': 6, 'product_id': 21, 'quantity': 1, 'unit_price': Decimal('38.00'), 'discount': Decimal('0.00'), 'total_price': Decimal('38.00'), 'notes': None, 'created_at': datetime.datetime(2026, 1, 22, 0, 9, 2)}
+{'id': 24, 'invoice_id': 6, 'product_id': 22, 'quantity': 1, 'unit_price': Decimal('18.00'), 'discount': Decimal('0.00'), 'total_price': Decimal('18.00'), 'notes': None, 'created_at': datetime.datetime(2026, 1, 22, 0, 9, 2)}
+{'id': 23, 'invoice_id': 6, 'product_id': 17, 'quantity': 1, 'unit_price': Decimal('35.00'), 'discount': Decimal('0.00'), 'total_price': Decimal('35.00'), 'notes': None, 'created_at': datetime.datetime(2026, 1, 22, 0, 9, 2)}
+
+--- RECENT DRAWER STATUS CHECK ---
+{'id': 2, 'opening_date': datetime.datetime(2026, 1, 21, 23, 58, 34), 'opening_balance': Decimal('1000.00'), 'status': 'Open'}

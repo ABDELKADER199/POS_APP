@@ -1,0 +1,15 @@
+# ملفات التنفيذ
+*.exe
+*.msi
+
+# مجلدات الإخراج
+InventoryPOS_Release/
+dist/
+build/
+
+
+# بيئة بايثون
+__pycache__/
+*.pyc
+.venv/
+

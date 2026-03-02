@@ -1,0 +1,13 @@
+🔍 AUDITING DATABASE: stocks
+--------------------------------------------------
+Invoices by Status:
+ - Completed      : Count=19    | Sum=10,563.00
+
+Store Summary:
+ - ID 1: المخزن الرئيسي      : 1     invoices | 60.00 sales
+ - ID 2: فرع الإسكندرية      : 16    invoices | 10,411.00 sales
+ - ID 3: فرع الجيزة          : 1     invoices | 60.00 sales
+ - ID 4: مدير عام            : 1     invoices | 32.00 sales
+
+Total Products: 129
+Total Sales (from items): 10,563.00

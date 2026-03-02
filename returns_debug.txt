@@ -1,0 +1,9 @@
+--- SALES RETURNS ---
+{'id': 1, 'return_number': 'RET-20260122004027', 'invoice_id': 7, 'store_id': 1, 'cashier_id': 1, 'return_date': datetime.datetime(2026, 1, 22, 0, 40, 27), 'total_return_amount': Decimal('32.00'), 'reason': 'مزاجي', 'created_at': datetime.datetime(2026, 1, 22, 0, 40, 27)}
+
+--- RECENT INVOICES ---
+{'invoice_number': 'INV-20260122002613', 'status': 'Completed', 'total_amount': Decimal('139.00')}
+{'invoice_number': 'INV-20260122000902', 'status': 'Completed', 'total_amount': Decimal('290.00')}
+{'invoice_number': 'INV-20260121152346', 'status': 'Completed', 'total_amount': Decimal('48.00')}
+{'invoice_number': 'INV-20260121152308', 'status': 'Completed', 'total_amount': Decimal('252.00')}
+{'invoice_number': 'INV-20260121152241', 'status': 'Completed', 'total_amount': Decimal('187.00')}

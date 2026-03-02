@@ -1,0 +1,353 @@
+
+
+--- Error at 2026-02-05 08:56:37.337253 ---
+Traceback (most recent call last):
+  File "C:\Program Files\WindowsApps\PythonSoftwareFoundation.Python.3.13_3.13.2544.0_x64__qbz5n2kfra8p0\Lib\enum.py", line 695, in __call__
+    def __call__(cls, value, names=_not_given, *values, module=None, qualname=None, type=None, start=1, boundary=None):
+    
+KeyboardInterrupt
+
+
+--- Error at 2026-02-07 20:44:21.963954 ---
+Traceback (most recent call last):
+  File "d:\Python Desktop\main.py", line 209, in <module>
+    main()
+    ~~~~^^
+  File "d:\Python Desktop\main.py", line 180, in main
+    window = POSApplication()
+  File "d:\Python Desktop\main.py", line 20, in __init__
+    self.db = DatabaseManager()
+              ~~~~~~~~~~~~~~~^^
+  File "d:\Python Desktop\database_manager.py", line 31, in __init__
+    self.create_returns_tables()
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "d:\Python Desktop\database_manager.py", line 522, in create_returns_tables
+    self.cursor.execute("""
+    ^^^^^^^^^^^^^^^^^^^
+AttributeError: 'NoneType' object has no attribute 'execute'
+
+
+--- Error at 2026-02-12 09:03:28.335722 ---
+Traceback (most recent call last):
+  File "d:\Python Desktop\ui\dashboard_page.py", line 388, in eventFilter
+    def eventFilter(self, source, event):
+    
+KeyboardInterrupt
+
+
+--- Error at 2026-02-12 09:07:42.676422 ---
+Traceback (most recent call last):
+  File "d:\Python Desktop\ui\dashboard_page.py", line 388, in eventFilter
+    def eventFilter(self, source, event):
+    
+KeyboardInterrupt
+
+
+--- Error at 2026-02-12 09:11:10.620724 ---
+Traceback (most recent call last):
+  File "d:\Python Desktop\ui\dashboard_page.py", line 388, in eventFilter
+    def eventFilter(self, source, event):
+    
+KeyboardInterrupt
+
+
+--- Error at 2026-02-12 09:18:46.520591 ---
+Traceback (most recent call last):
+  File "d:\Python Desktop\ui\dashboard_page.py", line 388, in eventFilter
+    def eventFilter(self, source, event):
+    
+KeyboardInterrupt
+
+
+--- Error at 2026-02-12 09:19:45.190340 ---
+Traceback (most recent call last):
+  File "d:\Python Desktop\ui\dashboard_page.py", line 388, in eventFilter
+    def eventFilter(self, source, event):
+    
+KeyboardInterrupt
+
+
+--- Error at 2026-02-12 10:15:42.629701 ---
+Traceback (most recent call last):
+  File "d:\Python Desktop\ui\dashboard_page.py", line 388, in eventFilter
+    def eventFilter(self, source, event):
+    
+KeyboardInterrupt
+
+
+--- Error at 2026-02-12 13:11:52.557173 ---
+Traceback (most recent call last):
+  File "d:\Python Desktop\ui\dashboard_page.py", line 388, in eventFilter
+    def eventFilter(self, source, event):
+    
+KeyboardInterrupt
+
+
+--- Error at 2026-02-14 03:00:38.629790 ---
+Traceback (most recent call last):
+  File "d:\Python Desktop\ui\dashboard_page.py", line 414, in eventFilter
+    self.alert_container.setToolTip("اضغط هنا لفتح درج جديد")
+    
+KeyboardInterrupt
+
+
+--- Error at 2026-02-14 03:53:13.939870 ---
+Traceback (most recent call last):
+  File "d:\Python Desktop\ui\dashboard_page.py", line 429, in eventFilter
+    def eventFilter(self, source, event):
+    
+KeyboardInterrupt
+
+
+--- Error at 2026-02-16 03:50:19.389887 ---
+Traceback (most recent call last):
+  File "d:\Python Desktop\ui\dashboard_page.py", line 416, in eventFilter
+    def eventFilter(self, source, event):
+    
+KeyboardInterrupt
+
+
+--- Error at 2026-02-16 16:53:09.705027 ---
+Traceback (most recent call last):
+  File "d:\Python Desktop\ui\dashboard_page.py", line 416, in eventFilter
+    def eventFilter(self, source, event):
+    
+KeyboardInterrupt
+
+
+--- Error at 2026-02-18 03:23:38.850140 ---
+Traceback (most recent call last):
+  File "d:\Python Desktop\ui\dashboard_page.py", line 424, in eventFilter
+    def eventFilter(self, source, event):
+    
+KeyboardInterrupt
+
+
+--- Error at 2026-02-18 03:29:54.088142 ---
+Traceback (most recent call last):
+  File "d:\Python Desktop\ui\dashboard_page.py", line 424, in eventFilter
+    def eventFilter(self, source, event):
+    
+KeyboardInterrupt
+
+
+--- Error at 2026-02-18 03:40:18.738959 ---
+Traceback (most recent call last):
+  File "d:\Python Desktop\ui\dashboard_page.py", line 424, in eventFilter
+    def eventFilter(self, source, event):
+    
+KeyboardInterrupt
+
+
+--- Error at 2026-02-18 03:58:48.189349 ---
+Traceback (most recent call last):
+  File "d:\Python Desktop\ui\purchases_page.py", line 935, in save_invoice
+    success = self.db.create_purchase_invoice(
+        supplier_id=supplier_id,
+    ...<9 lines>...
+        discount_amount=self.discount_input.value()
+    )
+  File "d:\Python Desktop\database_manager.py", line 2862, in create_purchase_invoice
+    stock_res = self.get_product_total_stock(pid) # Need to implement or use query
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AttributeError: 'DatabaseManager' object has no attribute 'get_product_total_stock'
+
+
+--- Error at 2026-02-18 03:59:10.971757 ---
+Traceback (most recent call last):
+  File "d:\Python Desktop\ui\purchases_page.py", line 935, in save_invoice
+    success = self.db.create_purchase_invoice(
+        supplier_id=supplier_id,
+    ...<9 lines>...
+        discount_amount=self.discount_input.value()
+    )
+  File "d:\Python Desktop\database_manager.py", line 2862, in create_purchase_invoice
+    stock_res = self.get_product_total_stock(pid) # Need to implement or use query
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AttributeError: 'DatabaseManager' object has no attribute 'get_product_total_stock'
+
+
+--- Error at 2026-02-18 13:52:01.834352 ---
+Traceback (most recent call last):
+  File "d:\Python Desktop\ui\purchases_page.py", line 949, in save_invoice
+    if invoice_id:
+       ^^^^^^^^^^
+NameError: name 'invoice_id' is not defined
+
+
+--- Error at 2026-02-18 13:59:54.647720 ---
+Traceback (most recent call last):
+  File "d:\Python Desktop\ui\purchases_page.py", line 935, in save_invoice
+    invoice_id = self.db.create_purchase_invoice(
+        supplier_id=supplier_id,
+    ...<9 lines>...
+        discount_amount=self.discount_input.value()
+    )
+  File "d:\Python Desktop\database_manager.py", line 2886, in create_purchase_invoice
+    new_wac_cost = ((old_qty * old_cost) + (qty * cost)) / new_qty_total
+                     ~~~~~~~~^~~~~~~~~~
+TypeError: unsupported operand type(s) for *: 'decimal.Decimal' and 'float'
+
+
+--- Error at 2026-02-18 14:02:27.862330 ---
+Traceback (most recent call last):
+  File "d:\Python Desktop\ui\purchases_page.py", line 935, in save_invoice
+    invoice_id = self.db.create_purchase_invoice(
+        supplier_id=supplier_id,
+    ...<9 lines>...
+        discount_amount=self.discount_input.value()
+    )
+  File "d:\Python Desktop\database_manager.py", line 2894, in create_purchase_invoice
+    self.update_product_price(pid, new_buy_price=new_wac_cost, changed_by=user_id, notes="متوسط تكلفة شراء")
+    ~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+TypeError: DatabaseManager.update_product_price() missing 1 required positional argument: 'new_sell_price'
+
+
+--- Error at 2026-02-20 03:19:48.440461 ---
+Traceback (most recent call last):
+  File "d:\Python Desktop\main.py", line 192, in closeEvent
+    def closeEvent(self, event):
+    
+KeyboardInterrupt
+
+
+--- Error at 2026-02-20 03:26:25.345246 ---
+Traceback (most recent call last):
+  File "d:\Python Desktop\ui\dashboard_page.py", line 424, in eventFilter
+    def eventFilter(self, source, event):
+    
+KeyboardInterrupt
+
+
+--- Error at 2026-02-21 02:11:13.068985 ---
+Traceback (most recent call last):
+  File "d:\Python Desktop\ui\dashboard_page.py", line 424, in eventFilter
+    def eventFilter(self, source, event):
+    
+KeyboardInterrupt
+
+
+--- Error at 2026-02-21 03:36:55.938701 ---
+Traceback (most recent call last):
+  File "d:\Python Desktop\ui\dashboard_page.py", line 424, in eventFilter
+    def eventFilter(self, source, event):
+    
+KeyboardInterrupt
+
+
+--- Error at 2026-02-21 03:46:50.984557 ---
+Traceback (most recent call last):
+  File "d:\Python Desktop\ui\dashboard_page.py", line 424, in eventFilter
+    def eventFilter(self, source, event):
+    
+KeyboardInterrupt
+
+
+--- Error at 2026-02-22 03:18:51.540221 ---
+Traceback (most recent call last):
+  File "d:\Python Desktop\main.py", line 192, in closeEvent
+    def closeEvent(self, event):
+    
+KeyboardInterrupt
+
+
+--- Error at 2026-02-22 03:22:09.044634 ---
+Traceback (most recent call last):
+  File "d:\Python Desktop\main.py", line 192, in closeEvent
+    def closeEvent(self, event):
+    
+KeyboardInterrupt
+
+
+--- Error at 2026-02-22 03:28:53.900519 ---
+Traceback (most recent call last):
+  File "d:\Python Desktop\ui\accounts_page.py", line 638, in <lambda>
+    browse_btn.clicked.connect(lambda: self.browse_file(file_path_lbl))
+                                       ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^
+  File "d:\Python Desktop\ui\accounts_page.py", line 544, in browse_file
+    path, _ = QFileDialog.getOpenFileName(self, "اختر ملف", "", "Images (*.png *.jpg *.jpeg *.pdf);;All Files (*)")
+              ^^^^^^^^^^^
+NameError: name 'QFileDialog' is not defined
+
+
+--- Error at 2026-02-23 02:23:15.757370 ---
+Traceback (most recent call last):
+  File "d:\Python Desktop\ui\purchases_page.py", line 961, in save_invoice
+    user_id=self.user['id'],
+            ~~~~~~~~~^^^^^^
+KeyError: 'id'
+
+
+--- Error at 2026-02-24 01:39:59.082267 ---
+Traceback (most recent call last):
+  File "d:\Python Desktop\ui\accounts_page.py", line 588, in <lambda>
+    browse_btn.clicked.connect(lambda: self.browse_file(file_path_lbl))
+                                       ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^
+  File "d:\Python Desktop\ui\accounts_page.py", line 620, in browse_file
+    label.setText(os.path.basename(path))
+                  ^^
+NameError: name 'os' is not defined. Did you forget to import 'os'?
+
+
+--- Error at 2026-02-24 01:43:15.972128 ---
+Traceback (most recent call last):
+  File "d:\Python Desktop\ui\accounts_page.py", line 588, in <lambda>
+    browse_btn.setStyleSheet(get_button_style('outline'))
+                                       ^^^^^^^^^^^^^^^^^^
+  File "d:\Python Desktop\ui\accounts_page.py", line 620, in browse_file
+    self.selected_file_path = path
+                  ^^
+NameError: name 'os' is not defined. Did you forget to import 'os'?
+
+
+--- Error at 2026-02-24 02:45:48.927467 ---
+Traceback (most recent call last):
+  File "d:\Python Desktop\ui\dashboard_page.py", line 407, in eventFilter
+    def eventFilter(self, source, event):
+    
+KeyboardInterrupt
+
+
+--- Error at 2026-02-24 02:50:59.508443 ---
+Traceback (most recent call last):
+  File "d:\Python Desktop\ui\settings_page.py", line 159, in _execute_backup
+    success, message = self.db.backup_database()
+                       ~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "d:\Python Desktop\database_manager.py", line 177, in backup_database
+    os.makedirs(backup_dir)
+    ~~~~~~~~~~~^^^^^^^^^^^^
+  File "<frozen os>", line 218, in makedirs
+  File "<frozen os>", line 228, in makedirs
+FileNotFoundError: [WinError 3] The system cannot find the path specified: 'E:/'
+
+
+--- Error at 2026-02-25 03:15:09.536003 ---
+Traceback (most recent call last):
+  File "d:\Python Desktop\ui\dashboard_page.py", line 407, in eventFilter
+    def eventFilter(self, source, event):
+    
+KeyboardInterrupt
+
+
+--- Error at 2026-02-25 04:18:23.611113 ---
+Traceback (most recent call last):
+  File "d:\Python Desktop\ui\dashboard_page.py", line 407, in eventFilter
+    def eventFilter(self, source, event):
+    
+KeyboardInterrupt
+
+
+--- Error at 2026-02-25 15:53:39.752445 ---
+Traceback (most recent call last):
+  File "d:\Python Desktop\ui\dashboard_page.py", line 407, in eventFilter
+    def eventFilter(self, source, event):
+    
+KeyboardInterrupt
+
+
+--- Error at 2026-02-25 16:00:48.942744 ---
+Traceback (most recent call last):
+  File "d:\Python Desktop\ui\dashboard_page.py", line 407, in eventFilter
+    def eventFilter(self, source, event):
+    
+KeyboardInterrupt
