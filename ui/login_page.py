@@ -3,13 +3,13 @@
 Login Page with Security
 """
 
-from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, 
-                             QPushButton, QMessageBox, QCheckBox)
+from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
+                             QPushButton, QMessageBox, QCheckBox, QFrame,
+                             QGraphicsDropShadowEffect)
 from PyQt6.QtCore import Qt, pyqtSignal
-from PyQt6.QtGui import QFont, QIcon
-from database_manager import DatabaseManager
-from ui.styles import GLOBAL_STYLE, BUTTON_STYLES, get_button_style, COLORS, TABLE_STYLE, GROUP_BOX_STYLE, INPUT_STYLE, LABEL_STYLE_HEADER, LABEL_STYLE_TITLE, TAB_STYLE
-import bcrypt
+from PyQt6.QtGui import QFont
+from ui.styles import GLOBAL_STYLE
+import mysql.connector
 
 class LoginPage(QWidget):
     """صفحة تسجيل الدخول"""
@@ -21,178 +21,305 @@ class LoginPage(QWidget):
         self.setStyleSheet(GLOBAL_STYLE)
         self.parent = parent
         self.db = db_manager
-        self.init_ui()
-        
-        # متغير لتخزين محاولات الدخول الفاشلة
+
+        # Login attempts state
         self.failed_attempts = 0
         self.max_attempts = 5
+
+        self.init_ui()
     
     def init_ui(self):
-        """إنشاء واجهة الصفحة"""
+        """إنشاء واجهة تسجيل دخول حديثة وأكثر احترافية."""
         self.setObjectName("loginPage")
-        
-        # خلفية متدرجة حديثة - نستخدم ID selector لتطبيقها فقط على الويجت الرئيسي
         self.setStyleSheet("""
             QWidget#loginPage {
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
-                                          stop:0 #2c3e50, stop:1 #3498db);
+                background: qlineargradient(
+                    x1: 0, y1: 0, x2: 1, y2: 1,
+                    stop: 0 #0B1220,
+                    stop: 0.45 #10203F,
+                    stop: 1 #091326
+                );
             }
-        """)
-        
-        main_layout = QVBoxLayout()
-        main_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        main_layout.setContentsMargins(0, 0, 0, 0)
-        
-        # حاوية البطاقة البيضاء
-        card_widget = QWidget()
-        card_widget.setObjectName("cardWidget")
-        card_widget.setFixedWidth(500)
-        
-        # ستايل البطاقة ومحتوياتها
-        card_widget.setStyleSheet("""
-            QWidget#cardWidget {
-                background-color: white;
-                border-radius: 20px;
+            QFrame#authShell {
+                background-color: rgba(10, 18, 34, 0.72);
+                border: 1px solid rgba(125, 167, 255, 0.22);
+                border-radius: 26px;
             }
-            QLabel {
-                color: #2c3e50;
-                background-color: transparent;
-                border: none;
+            QFrame#heroPanel {
+                border-radius: 22px;
+                background: qlineargradient(
+                    x1: 0, y1: 0, x2: 1, y2: 1,
+                    stop: 0 #1D4ED8,
+                    stop: 0.55 #0E3A89,
+                    stop: 1 #08224F
+                );
             }
-        """)
-        
-        card_layout = QVBoxLayout()
-        card_layout.setSpacing(15)
-        card_layout.setContentsMargins(40, 40, 40, 40)
-        
-        # الشعار/الأيقونة
-        icon_label = QLabel("🛒")
-        icon_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        # Fallback fonts
-        icon_label.setFont(QFont("Segoe UI Emoji, Apple Color Emoji, Arial", 48))
-        card_layout.addWidget(icon_label)
-        
-        # العنوان الرئيسي
-        title = QLabel("نظام إدارة المبيعات")
-        title.setFont(QFont("Segoe UI, Arial", 24, QFont.Weight.Bold))
-        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        card_layout.addWidget(title)
-        
-        # النص الفرعي
-        subtitle = QLabel("تسجيل الدخول للمتابعة")
-        subtitle.setFont(QFont("Segoe UI, Arial", 11))
-        # استخدام color مباشرة هنا لضمان التطبيق
-        subtitle.setStyleSheet("color: #7f8c8d; margin-bottom: 20px;")
-        subtitle.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        card_layout.addWidget(subtitle)
-        
-        # حقل البريد
-        self.email_input = QLineEdit()
-        self.email_input.setPlaceholderText("✉️  البريد الإلكتروني")
-        self.email_input.setFont(QFont("Segoe UI, Arial", 11))
-        self.email_input.setMinimumHeight(50)
-        self.email_input.setStyleSheet("""
-            QLineEdit {
-                border: 2px solid #ecf0f1;
-                border-radius: 10px;
-                padding: 10px 15px;
-                background-color: #f8f9fa;
-                color: #2c3e50;
+            QLabel#heroBadge {
+                background: rgba(255, 255, 255, 0.16);
+                border: 1px solid rgba(255, 255, 255, 0.25);
+                color: #F8FAFC;
+                font-size: 30px;
+                font-weight: 700;
+                border-radius: 18px;
+                padding: 10px 16px;
             }
-            QLineEdit:focus {
-                border: 2px solid #3498db;
-                background-color: white;
-            }
-        """)
-        card_layout.addWidget(self.email_input)
-        self.email_input.returnPressed.connect(self.login)
-        
-        # حقل كلمة المرور
-        self.password_input = QLineEdit()
-        self.password_input.setPlaceholderText("🔒  كلمة المرور")
-        self.password_input.setEchoMode(QLineEdit.EchoMode.Password)
-        self.password_input.setFont(QFont("Segoe UI, Arial", 11))
-        self.password_input.setMinimumHeight(50)
-        self.password_input.setStyleSheet("""
-            QLineEdit {
-                border: 2px solid #ecf0f1;
-                border-radius: 10px;
-                padding: 10px 15px;
-                background-color: #f8f9fa;
-                color: #2c3e50;
-            }
-            QLineEdit:focus {
-                border: 2px solid #3498db;
-                background-color: white;
-            }
-        """)
-        card_layout.addWidget(self.password_input)
-        self.password_input.returnPressed.connect(self.login)
-        
-        # خيار إظهار كلمة المرور
-        self.show_password_check = QCheckBox("إظهار كلمة المرور")
-        self.show_password_check.setFont(QFont("Segoe UI, Arial", 10))
-        self.show_password_check.setCursor(Qt.CursorShape.PointingHandCursor)
-        # إجبار اللون على أن يكون مرئياً
-        self.show_password_check.setStyleSheet("""
-            QCheckBox { 
-                spacing: 8px; 
-                color: #555555; 
+            QLabel#heroTitle {
+                color: #FFFFFF;
+                font-size: 28px;
+                font-weight: 800;
                 background: transparent;
             }
-            QCheckBox::indicator { 
-                width: 18px; 
-                height: 18px; 
-                border-radius: 4px; 
-                border: 2px solid #bdc3c7; 
+            QLabel#heroSubtitle {
+                color: #DBEAFE;
+                font-size: 13px;
+                line-height: 1.35em;
+                background: transparent;
             }
-            QCheckBox::indicator:checked { 
-                background-color: #3498db; 
-                border-color: #3498db; 
+            QLabel#heroFeature {
+                background: rgba(255, 255, 255, 0.12);
+                color: #EFF6FF;
+                border: 1px solid rgba(255, 255, 255, 0.18);
+                border-radius: 12px;
+                padding: 9px 12px;
+                font-size: 12px;
+                font-weight: 600;
             }
-        """)
-        self.show_password_check.stateChanged.connect(self.toggle_password_visibility)
-        card_layout.addWidget(self.show_password_check)
-        
-        card_layout.addSpacing(10)
-        
-        # زر الدخول
-        login_btn = QPushButton("تسجيل الدخول")
-        login_btn.setMinimumHeight(55)
-        login_btn.setFont(QFont("Segoe UI, Arial", 12, QFont.Weight.Bold))
-        login_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        login_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #3498db;
-                color: white;
+            QFrame#formPanel {
+                background-color: rgba(255, 255, 255, 0.96);
+                border: 1px solid rgba(255, 255, 255, 0.74);
+                border-radius: 22px;
+            }
+            QLabel#formTitle {
+                color: #0F172A;
+                font-size: 23px;
+                font-weight: 800;
+                background: transparent;
+            }
+            QLabel#formSubtitle {
+                color: #475569;
+                font-size: 12px;
+                background: transparent;
+            }
+            QLabel#fieldLabel {
+                color: #334155;
+                font-size: 12px;
+                font-weight: 600;
+                background: transparent;
+            }
+            QLabel#statusHint {
+                color: #64748B;
+                font-size: 12px;
+                background: transparent;
                 border: none;
-                border-radius: 10px;
-                font-weight: bold;
             }
-            QPushButton:hover {
-                background-color: #2980b9;
-                margin-top: -2px;
+            QLineEdit {
+                border: 1px solid #CBD5E1;
+                border-radius: 12px;
+                padding: 12px 14px;
+                background-color: #F8FAFC;
+                color: #0F172A;
+                font-size: 13px;
             }
-            QPushButton:pressed {
-                background-color: #2574a9;
-                margin-top: 0px;
+            QLineEdit:focus {
+                border: 1px solid #2563EB;
+                background-color: #FFFFFF;
+            }
+            QCheckBox {
+                color: #334155;
+                font-size: 12px;
+                spacing: 8px;
+                padding-right: 2px;
+                background: transparent;
+            }
+            QCheckBox::indicator {
+                width: 16px;
+                height: 16px;
+                border-radius: 4px;
+                border: 1px solid #94A3B8;
+                background: #FFFFFF;
+            }
+            QCheckBox::indicator:checked {
+                background: #2563EB;
+                border-color: #2563EB;
+            }
+            QPushButton#loginButton {
+                background-color: #2563EB;
+                color: #FFFFFF;
+                border: none;
+                border-radius: 12px;
+                font-size: 13px;
+                font-weight: 700;
+                min-height: 52px;
+            }
+            QPushButton#loginButton:hover { background-color: #1D4ED8; }
+            QPushButton#loginButton:pressed { background-color: #1E40AF; }
+            QPushButton#loginButton:disabled {
+                background-color: #9CA3AF;
+                color: #E5E7EB;
             }
         """)
-        login_btn.clicked.connect(self.login)
-        card_layout.addWidget(login_btn)
-        
-        card_widget.setLayout(card_layout)
-        main_layout.addWidget(card_widget)
-        
-        self.setLayout(main_layout)
-    
+
+        main_layout = QVBoxLayout(self)
+        main_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        main_layout.setContentsMargins(20, 20, 20, 20)
+
+        shell = QFrame()
+        shell.setObjectName("authShell")
+        shell.setMaximumWidth(1020)
+
+        shadow = QGraphicsDropShadowEffect(self)
+        shadow.setBlurRadius(55)
+        shadow.setOffset(0, 10)
+        shadow.setColor(Qt.GlobalColor.black)
+        shell.setGraphicsEffect(shadow)
+
+        shell_layout = QHBoxLayout(shell)
+        shell_layout.setContentsMargins(14, 14, 14, 14)
+        shell_layout.setSpacing(14)
+
+        hero_panel = QFrame()
+        hero_panel.setObjectName("heroPanel")
+        hero_panel.setMinimumWidth(340)
+        hero_panel.setMaximumWidth(390)
+        hero_layout = QVBoxLayout(hero_panel)
+        hero_layout.setContentsMargins(24, 26, 24, 24)
+        hero_layout.setSpacing(12)
+
+        hero_badge = QLabel("POS")
+        hero_badge.setObjectName("heroBadge")
+        hero_badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        hero_badge.setFixedWidth(110)
+        hero_layout.addWidget(hero_badge, alignment=Qt.AlignmentFlag.AlignRight)
+
+        hero_title = QLabel("نظام إدارة المبيعات")
+        hero_title.setObjectName("heroTitle")
+        hero_title.setAlignment(Qt.AlignmentFlag.AlignRight)
+        hero_layout.addWidget(hero_title)
+
+        hero_subtitle = QLabel("وصول آمن وسريع إلى لوحة التحكم، المنتجات، الفواتير، والإحصائيات اليومية.")
+        hero_subtitle.setObjectName("heroSubtitle")
+        hero_subtitle.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignTop)
+        hero_subtitle.setWordWrap(True)
+        hero_layout.addWidget(hero_subtitle)
+
+        for text in [
+            "حماية الدخول بالبصمة الرقمية للجهاز",
+            "تدقيق محاولات تسجيل الدخول لحظياً",
+            "إدارة متعددة الفروع ضمن واجهة واحدة",
+        ]:
+            feature = QLabel(f"? {text}")
+            feature.setObjectName("heroFeature")
+            feature.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            hero_layout.addWidget(feature)
+        hero_layout.addStretch()
+
+        form_panel = QFrame()
+        form_panel.setObjectName("formPanel")
+        form_layout = QVBoxLayout(form_panel)
+        form_layout.setContentsMargins(34, 30, 34, 28)
+        form_layout.setSpacing(10)
+
+        form_title = QLabel("تسجيل الدخول")
+        form_title.setObjectName("formTitle")
+        form_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        form_layout.addWidget(form_title)
+
+        form_subtitle = QLabel("أدخل بريدك وكلمة المرور للمتابعة")
+        form_subtitle.setObjectName("formSubtitle")
+        form_subtitle.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        form_layout.addWidget(form_subtitle)
+        form_layout.addSpacing(8)
+
+        email_label = QLabel("البريد الإلكتروني")
+        email_label.setObjectName("fieldLabel")
+        email_label.setAlignment(Qt.AlignmentFlag.AlignRight)
+        form_layout.addWidget(email_label)
+
+        self.email_input = QLineEdit()
+        self.email_input.setPlaceholderText("name@example.com")
+        self.email_input.setFont(QFont("Segoe UI", 11))
+        self.email_input.setMinimumHeight(52)
+        self.email_input.returnPressed.connect(self.login)
+        form_layout.addWidget(self.email_input)
+
+        password_label = QLabel("كلمة المرور")
+        password_label.setObjectName("fieldLabel")
+        password_label.setAlignment(Qt.AlignmentFlag.AlignRight)
+        form_layout.addWidget(password_label)
+
+        self.password_input = QLineEdit()
+        self.password_input.setPlaceholderText("أدخل كلمة المرور")
+        self.password_input.setEchoMode(QLineEdit.EchoMode.Password)
+        self.password_input.setFont(QFont("Segoe UI", 11))
+        self.password_input.setMinimumHeight(52)
+        self.password_input.returnPressed.connect(self.login)
+        form_layout.addWidget(self.password_input)
+
+        self.show_password_check = QCheckBox("إظهار كلمة المرور")
+        self.show_password_check.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.show_password_check.stateChanged.connect(self.toggle_password_visibility)
+        form_layout.addWidget(self.show_password_check)
+
+        self.status_label = QLabel("")
+        self.status_label.setObjectName("statusHint")
+        self.status_label.setAlignment(Qt.AlignmentFlag.AlignRight)
+        form_layout.addWidget(self.status_label)
+
+        self.login_btn = QPushButton("تسجيل الدخول")
+        self.login_btn.setObjectName("loginButton")
+        self.login_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.login_btn.setFont(QFont("Segoe UI", 12, QFont.Weight.Bold))
+        self.login_btn.clicked.connect(self.login)
+        form_layout.addWidget(self.login_btn)
+
+        helper = QLabel("يتم التحقق من الجهاز وعنوان الشبكة تلقائياً لحماية الحساب")
+        helper.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        helper.setWordWrap(True)
+        helper.setStyleSheet("color: #94A3B8; font-size: 11px; margin-top: 2px;")
+        form_layout.addWidget(helper)
+
+        shell_layout.addWidget(hero_panel)
+        shell_layout.addWidget(form_panel, 1)
+        main_layout.addWidget(shell)
+        self._update_attempts_hint()
+
     def toggle_password_visibility(self):
         """إظهار/إخفاء كلمة المرور"""
         if self.show_password_check.isChecked():
             self.password_input.setEchoMode(QLineEdit.EchoMode.Normal)
         else:
             self.password_input.setEchoMode(QLineEdit.EchoMode.Password)
-    
+
+    def _set_login_busy(self, busy: bool):
+        """تحديث حالة زر تسجيل الدخول أثناء التحقق."""
+        if not hasattr(self, "login_btn"):
+            return
+        if busy:
+            self.login_btn.setText("جارٍ التحقق...")
+            self.login_btn.setEnabled(False)
+        else:
+            if self.failed_attempts >= self.max_attempts:
+                self.login_btn.setText("تم الإيقاف مؤقتاً")
+                self.login_btn.setEnabled(False)
+            else:
+                self.login_btn.setText("تسجيل الدخول")
+                self.login_btn.setEnabled(True)
+
+    def _update_attempts_hint(self):
+        """عرض حالة محاولات الدخول المتبقية للمستخدم."""
+        if not hasattr(self, "status_label"):
+            return
+        remaining = max(0, self.max_attempts - self.failed_attempts)
+        if self.failed_attempts == 0:
+            self.status_label.setText("أدخل بياناتك للمتابعة بشكل آمن")
+            self.status_label.setStyleSheet("color: #64748B; font-size: 12px;")
+        elif self.failed_attempts < self.max_attempts:
+            self.status_label.setText(f"تنبيه: تبقى {remaining} محاولة قبل إيقاف تسجيل الدخول")
+            self.status_label.setStyleSheet("color: #B45309; font-size: 12px; font-weight: 600;")
+        else:
+            self.status_label.setText("تم إيقاف تسجيل الدخول مؤقتاً بسبب تجاوز عدد المحاولات")
+            self.status_label.setStyleSheet("color: #B91C1C; font-size: 12px; font-weight: 700;")
+
     def login(self):
         """محاولة تسجيل الدخول مع التحقق من الموقع والجهاز"""
         email = self.email_input.text().strip()
@@ -215,7 +342,7 @@ class LoginPage(QWidget):
             device_id = device_info['device_id']
             device_name = device_info['device_name']
             ip_address = device_info['ip_address']
-        except Exception as e:
+        except (ImportError, KeyError, OSError, RuntimeError) as e:
             QMessageBox.critical(self, "خطأ", f"فشل في الحصول على معلومات الجهاز: {str(e)}")
             return
         
@@ -227,6 +354,7 @@ class LoginPage(QWidget):
             if not user:
                 # فشل تسجيل الدخول - بيانات خاطئة
                 self.failed_attempts += 1
+                self._update_attempts_hint()
                 remaining = self.max_attempts - self.failed_attempts
                 
                 # تسجيل المحاولة الفاشلة
@@ -247,6 +375,9 @@ class LoginPage(QWidget):
                     )
                     self.password_input.setEnabled(False)
                     self.email_input.setEnabled(False)
+                    if hasattr(self, "login_btn"):
+                        self.login_btn.setText("تم الإيقاف مؤقتاً")
+                        self.login_btn.setEnabled(False)
                 else:
                     QMessageBox.warning(
                         self, "خطأ",
@@ -291,6 +422,7 @@ class LoginPage(QWidget):
                 )
                 
                 self.failed_attempts = 0
+                self._update_attempts_hint()
                 QMessageBox.information(
                     self, "نجاح", 
                     f"مرحباً {user['name']}\n"
@@ -399,10 +531,11 @@ class LoginPage(QWidget):
             )
             
             self.failed_attempts = 0
+            self._update_attempts_hint()
             QMessageBox.information(self, "نجاح", f"مرحباً {user['name']}")
             self.parent.show_dashboard(user)
             
-        except Exception as e:
+        except (mysql.connector.Error, KeyError, ValueError, TypeError) as e:
             QMessageBox.critical(self, "خطأ", f"حدث خطأ: {str(e)}")
             import traceback
             print(traceback.format_exc())
@@ -414,6 +547,10 @@ class LoginPage(QWidget):
         self.password_input.clear()
         self.show_password_check.setChecked(False)
         self.failed_attempts = 0
+        if hasattr(self, "login_btn"):
+            self.login_btn.setEnabled(True)
+            self.login_btn.setText("تسجيل الدخول")
         self.email_input.setEnabled(True)
         self.password_input.setEnabled(True)
+        self._update_attempts_hint()
         self.email_input.setFocus()

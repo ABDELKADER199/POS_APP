@@ -1,11 +1,27 @@
 import subprocess
 import hashlib
 import os
+import logging
+
+logger = logging.getLogger(__name__)
 
 class LicenseManager:
     """إدارة ترخيص البرنامج وربطه بالهاردوير"""
     
-    SECRET_SALT = "Pos_Safe_2026_@Admin" # ملح سري خاص بك لتأمين المفاتيح
+    DEFAULT_SECRET_SALT = "CHANGE_ME_IN_ENV"
+
+    @classmethod
+    def _get_secret_salt(cls) -> str:
+        """Get secret salt from environment to avoid hardcoding secrets."""
+        salt = os.getenv("POS_LICENSE_SECRET") or os.getenv("LICENSE_SECRET")
+        if salt:
+            return salt
+
+        logger.warning(
+            "License secret not set in environment. Using insecure fallback value. "
+            "Set POS_LICENSE_SECRET in .env."
+        )
+        return cls.DEFAULT_SECRET_SALT
 
     @staticmethod
     def get_bios_serial():
@@ -30,7 +46,7 @@ class LicenseManager:
         """توليد كود الجهاز (Hardware ID) ليقوم العميل بإرساله لك"""
         bios = cls.get_bios_serial()
         # تشفير الرقم التسلسلي لجعله "كود طلب" غير مفهوم للعميل
-        h = hashlib.sha256(f"{bios}{cls.SECRET_SALT}".encode()).hexdigest().upper()
+        h = hashlib.sha256(f"{bios}{cls._get_secret_salt()}".encode()).hexdigest().upper()
         # نأخذ أول 16 حرفاً مقسمة لمجموعات لسهولة القراءة
         short_id = f"{h[:4]}-{h[4:8]}-{h[8:12]}-{h[12:16]}"
         return short_id
@@ -41,7 +57,7 @@ class LicenseManager:
         توليد مفتاح التفعيل (Activation Key) بناءً على كود الجهاز
         ملاحظة: هذه الدالة ستستخدمها أنت فقط في أداة خارجية أو مخفية
         """
-        raw_key = f"{hardware_id}{cls.SECRET_SALT}_ACTIVATED".encode()
+        raw_key = f"{hardware_id}{cls._get_secret_salt()}_ACTIVATED".encode()
         h = hashlib.sha256(raw_key).hexdigest().upper()
         return f"{h[:4]}-{h[8:12]}-{h[16:20]}-{h[24:28]}"
 

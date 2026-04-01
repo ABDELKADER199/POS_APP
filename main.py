@@ -1,10 +1,12 @@
 import sys
 import os
 import traceback
+import logging
 from datetime import datetime
+import mysql.connector
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QStackedWidget, 
                              QMessageBox, QWidget, QVBoxLayout)
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QIcon, QFont
 from ui.login_page import LoginPage
 from ui.dashboard_page import DashboardPage
@@ -15,6 +17,12 @@ from utils.license_manager import LicenseManager
 from ui.styles import GLOBAL_STYLE, COLORS
 from database_manager import DatabaseManager
 from utils.path_helper import resource_path
+from utils.sync_manager import SyncManager
+from ui.sync_dialog import SyncDialog
+
+# إعداد نظام التنبيهات واللوج
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
 
 class POSApplication(QMainWindow):
     """تطبيق نقطة البيع الرئيسي"""
@@ -22,6 +30,7 @@ class POSApplication(QMainWindow):
     def __init__(self):
         super().__init__()
         self.db = DatabaseManager()
+        self.sync_manager = SyncManager() # مدير المزامنة
         self.setWindowTitle("نظام نقطة البيع المتكاملة - POS System")
         self.setWindowIcon(QIcon(resource_path("icon.png")))
         
@@ -53,13 +62,19 @@ class POSApplication(QMainWindow):
         
         # التحقق من الاتصال بقاعدة البيانات
         self.check_database_connection()
+        
+        # --- NEW: Sync Recovery on Startup ---
+        self.check_sync_recovery()
+        
+        # بدء المزامنة في الخلفية
+        self.sync_manager.start_background_sync(interval=600) # كل 10 دقائق
 
     def create_menu(self):
         """إنشاء القائمة الرئيسية"""
         menubar = self.menuBar()
         
         # قائمة ملف
-        file_menu = menubar.addMenu("ملف")
+        file_menu = menubar.addMenu("ظ…ظ„ظپ")
         
         exit_action = file_menu.addAction("خروج")
         exit_action.triggered.connect(self.quit_application)
@@ -77,19 +92,27 @@ class POSApplication(QMainWindow):
         """التحقق من الاتصال بقاعدة البيانات"""
         try:
             if not self.db.cursor:
-                raise Exception("غير متصل بقاعدة البيانات")
+                raise RuntimeError("غير متصل بقاعدة البيانات")
 
             cursor = self.db.cursor
             cursor.execute("SELECT 1")
             cursor.fetchone()
-            print("✅ متصل بقاعدة البيانات بنجاح")
-        except Exception as e:
+        except (mysql.connector.Error, RuntimeError, AttributeError) as e:
             QMessageBox.critical(
                 self, "خطأ الاتصال",
                 f"فشل الاتصال بقاعدة البيانات:\n{str(e)}\n\nيرجى تشغيل خادم MySQL"
             )
             sys.exit(1)
-    
+            
+    def check_sync_recovery(self):
+        """التحقق من المزامنة عند الفتح"""
+        try:
+            logger.info("Checking sync on startup as requested...")
+            from ui.sync_dialog import run_mandatory_sync
+            run_mandatory_sync(self.sync_manager, self, "يجب مزامنة البيانات ومقارنتها مع السحابة عند فتح التطبيق")
+        except Exception as e:
+            logger.error(f"Startup sync recovery failed: {e}")
+            
     def check_initial_page(self):
         """Check if system is activated and show appropriate page"""
         hw_id = LicenseManager.get_hardware_id()
@@ -126,11 +149,10 @@ class POSApplication(QMainWindow):
         # إضافة الصفحة الجديدة
         self.stacked_widget.addWidget(self.dashboard_page)
         
-        # تعيين المستخدم
-        self.dashboard_page.set_user(user_info)
-        
+        # تعيين المستخدم        
         # عرض الصفحة
         self.stacked_widget.setCurrentWidget(self.dashboard_page)
+        QTimer.singleShot(0, lambda: self.dashboard_page.set_user(user_info))
     
     def logout(self):
         """تسجيل الخروج"""
@@ -141,6 +163,9 @@ class POSApplication(QMainWindow):
         )
         
         if reply == QMessageBox.StandardButton.Yes:
+            from ui.sync_dialog import run_mandatory_sync
+            run_mandatory_sync(self.sync_manager, self, "يجب مزامنة البيانات قبل تسجيل الخروج")
+            
             # إزالة صفحة لوحة المعلومات
             if self.dashboard_page:
                 self.stacked_widget.removeWidget(self.dashboard_page)
@@ -190,13 +215,22 @@ class POSApplication(QMainWindow):
             self.close()
     
     def closeEvent(self, event):
-        """حدث إغلاق النافذة"""
-        # التأكد من إغلاق الاتصال بقاعدة البيانات
+        """حدث إغلاق النافذة - مزامنة البيانات قبل الخروج"""
         try:
+            # 1. إيقاف المزامنة التلقائية (التي كانت تعمل في الخلفية)
+            self.sync_manager.stop_background_sync()
+            
+            # 2. إجبار المزامنة قبل الخروج كما طلب المستخدم
+            from ui.sync_dialog import run_mandatory_sync
+            run_mandatory_sync(self.sync_manager, self, "يجب مزامنة البيانات قبل الخروج")
+            
+            # 3. إغلاق الاتصال بقاعدة البيانات
             self.db.close()
-        except:
-            pass
-        
+            
+        except Exception as e:
+            print(f"Failed to sync/close cleanly: {e}")
+            logger.error("Close event error: %s", e, exc_info=True)
+
         event.accept()
 
 def main():
@@ -233,13 +267,17 @@ def exception_hook(exctype, value, tb):
     try:
         if QApplication.instance():
             QMessageBox.critical(None, "Critical Error", f"حدث خطأ غير متوقع:\n{value}\n\nراجع ملف error.log للتفاصيل.")
-    except:
-        pass
-    
+    except (RuntimeError, TypeError) as e:
+        print(f"Failed to show critical error dialog: {e}")
+
     sys.__excepthook__(exctype, value, tb)
 
 if __name__ == "__main__":
 
     sys.excepthook = exception_hook
     main()
+
+
+
+
 

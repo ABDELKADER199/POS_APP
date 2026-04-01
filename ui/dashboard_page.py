@@ -8,7 +8,10 @@ from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLa
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QFont, QShortcut, QKeySequence
 
-# استيراد الصفحات الفرعية
+from ui.purchases_page import PurchasesPage
+from ui.styles import GLOBAL_STYLE, BUTTON_STYLES, get_button_style, COLORS, TABLE_STYLE, GROUP_BOX_STYLE, INPUT_STYLE, LABEL_STYLE_HEADER, LABEL_STYLE_TITLE, TAB_STYLE
+
+from database_manager import DatabaseManager
 from ui.admin_panel import AdminPanel
 from ui.cashier_page import CashierPage
 from ui.call_center_page import CallCenterPage
@@ -18,9 +21,7 @@ from ui.returns_page import ReturnsPage
 from ui.stats_page import StatsPage
 from ui.accounts_page import AccountsPage
 from ui.settings_page import SettingsPage
-from ui.styles import GLOBAL_STYLE, BUTTON_STYLES, get_button_style, COLORS, TABLE_STYLE, GROUP_BOX_STYLE, INPUT_STYLE, LABEL_STYLE_HEADER, LABEL_STYLE_TITLE, TAB_STYLE
-
-from database_manager import DatabaseManager
+from ui.purchases_page import PurchasesPage 
 
 class DashboardPage(QWidget):
     """صفحة لوحة التحكم الرئيسية"""
@@ -31,6 +32,7 @@ class DashboardPage(QWidget):
         self.parent = parent
         self.user_info = None
         self.db = DatabaseManager()
+        self._loaded_tabs = set()
         self.init_ui()
     
     def init_ui(self):
@@ -87,18 +89,18 @@ class DashboardPage(QWidget):
         
         # إنشاء علامات التبويب
         self.tabs = QTabWidget()
+        self.tabs.currentChanged.connect(self.on_tab_changed)
         
         # سيتم إضافة الصفحات بناءً على دور المستخدم
-        self.admin_panel = AdminPanel()
+        self.admin_panel = AdminPanel(auto_load=False)
         self.cashier_page = CashierPage()
-        self.call_center_page = CallCenterPage()
-        self.products_page = ProductsPage()
+        self.call_center_page = CallCenterPage(auto_load=False)
+        self.products_page = ProductsPage(auto_load=False)
         self.drawer_page = DrawerPage()
         self.returns_page = ReturnsPage(self.db, self.user_info)
-        self.stats_page = StatsPage(self.db)
-        self.returns_page = ReturnsPage(self.db, self.user_info)
-        self.stats_page = StatsPage(self.db)
-        self.accounts_page = AccountsPage(self.user_info)
+        self.stats_page = StatsPage(self.db, auto_load=False)
+        self.accounts_page = AccountsPage(self.user_info, auto_load=False)
+        self.purchases_page = PurchasesPage(self.db, self.user_info, auto_load=False)
         self.settings_page = SettingsPage()
         
         main_layout.addWidget(self.tabs)
@@ -108,6 +110,7 @@ class DashboardPage(QWidget):
     def set_user(self, user_info):
         """تعيين معلومات المستخدم"""
         self.user_info = user_info
+        self._loaded_tabs.clear()
         
         # تحديث صفحة الكاشير وصفحة الدرج بمعلومات المستخدم
         if hasattr(self.cashier_page, 'set_user'):
@@ -149,6 +152,10 @@ class DashboardPage(QWidget):
 
         if hasattr(self.accounts_page, 'set_user'):
             self.accounts_page.set_user(user_info)
+        if hasattr(self.purchases_page, 'set_user'):
+            self.purchases_page.set_user(user_info)
+        if hasattr(self.settings_page, 'set_user'):
+            self.settings_page.set_user(user_info)
             
         if hasattr(self.cashier_page, 'sale_completed'):
             try:
@@ -159,7 +166,7 @@ class DashboardPage(QWidget):
         
         # تحديث معلومات المستخدم في الواجهة
         self.user_label.setText(
-            f"👤 المستخدِم: <b style='color: {COLORS['primary']}'>{user_info['name']}</b> | "
+            f"👤 المستخدِم: <b style='color: {COLORS['text_light']}'>{user_info['name']}</b> | "
             f"📍 الفرع: <b style='color: {COLORS['success']}'>{user_info.get('store_name', 'غير محدد')}</b> | "
             f"🛡️ الدور: {user_info['role_name']}"
         )
@@ -167,7 +174,7 @@ class DashboardPage(QWidget):
         
         # التحقق من النواقص (للمديرين فقط)
         if user_info['role_id'] in [99, 1, 2]:
-            self.check_low_stock()
+            QTimer.singleShot(1500, self.check_low_stock)
         else:
             self.alert_container.hide()
         
@@ -181,6 +188,7 @@ class DashboardPage(QWidget):
             self.tabs.addTab(self.stats_page, "الإحصائيات")
             self.tabs.addTab(self.admin_panel, "إدارة المستخدمين")
             self.tabs.addTab(self.products_page, "إدارة المنتجات")
+            self.tabs.addTab(self.purchases_page, "🛒 المشتريات والموردين")
             self.tabs.addTab(self.accounts_page, "💰 الحسابات والمالية")
             self.tabs.addTab(self.returns_page, "مرتجع فواتير")
             self.tabs.addTab(self.cashier_page, "الكاشير")
@@ -190,6 +198,7 @@ class DashboardPage(QWidget):
         
         elif role == 2:  # Manager
             self.tabs.addTab(self.products_page, "إدارة المنتجات")
+            self.tabs.addTab(self.purchases_page, "🛒 المشتريات والموردين")
             self.tabs.addTab(self.accounts_page, "💰 الحسابات والمالية")
             self.tabs.addTab(self.returns_page, "مرتجع فواتير")
             self.tabs.addTab(self.cashier_page, "الكاشير")
@@ -208,6 +217,54 @@ class DashboardPage(QWidget):
         
         # إعداد الاختصارات بعد إضافة التبويبات
         self.setup_shortcuts()
+        
+        # افتح على تبويب الكاشير افتراضيًا لتقليل حمل البداية
+        cashier_idx = self.tabs.indexOf(self.cashier_page)
+        if cashier_idx >= 0:
+            self.tabs.setCurrentIndex(cashier_idx)
+        
+        # تحميل بيانات التبويب الحالي فقط
+        QTimer.singleShot(0, lambda: self.on_tab_changed(self.tabs.currentIndex()))
+
+    def on_tab_changed(self, index: int):
+        """تحميل بيانات التبويب عند فتحه لأول مرة."""
+        if index < 0:
+            return
+        widget = self.tabs.widget(index)
+        self._ensure_tab_loaded(widget, force=False)
+
+    def _ensure_tab_loaded(self, widget, force: bool = False):
+        if widget is None:
+            return
+
+        key = id(widget)
+        if (not force) and key in self._loaded_tabs:
+            return
+
+        try:
+            if widget == self.products_page and hasattr(self.products_page, 'ensure_loaded'):
+                self.products_page.ensure_loaded(force=force)
+            elif widget == self.stats_page and hasattr(self.stats_page, 'ensure_loaded'):
+                self.stats_page.ensure_loaded(force=force)
+            elif widget == self.accounts_page and hasattr(self.accounts_page, 'ensure_loaded'):
+                self.accounts_page.ensure_loaded(force=force)
+            elif widget == self.purchases_page and hasattr(self.purchases_page, 'ensure_loaded'):
+                self.purchases_page.ensure_loaded(force=force)
+            elif widget == self.admin_panel:
+                if hasattr(self.admin_panel, 'ensure_loaded'):
+                    self.admin_panel.ensure_loaded(force=force)
+                else:
+                    self.admin_panel.load_users()
+                    self.admin_panel.load_drawers()
+            elif widget == self.call_center_page:
+                if hasattr(self.call_center_page, 'ensure_loaded'):
+                    self.call_center_page.ensure_loaded(force=force)
+                else:
+                    self.call_center_page.load_orders()
+            elif widget == self.drawer_page:
+                self.drawer_page.check_drawer_status()
+        finally:
+            self._loaded_tabs.add(key)
 
     def setup_shortcuts(self):
         """إعداد اختصارات لوحة المفاتيح"""
@@ -326,44 +383,17 @@ class DashboardPage(QWidget):
             self.parent.logout()
 
     def refresh_all_data(self):
-        """تحديث كافة البيانات في جميع الصفحات المفتوحة"""
-        print("🔄 جارٍ تحديث كافة البيانات...")
-        
-        # 1. تحديث صفحة الإدارة
-        if hasattr(self, 'admin_panel'):
-            self.admin_panel.load_users()
-            self.admin_panel.load_drawers()
-            
-        # 2. تحديث صفحة المنتجات والمخزون
-        if hasattr(self, 'products_page'):
-            self.products_page.load_products()
-            self.products_page.load_inventory()
-            
-        # 3. تحديث صفحة الـ Call Center
-        if hasattr(self, 'call_center_page'):
-            self.call_center_page.load_orders()
-            
-        # 4. تحديث حالة الدرج
-        if hasattr(self, 'drawer_page'):
-            self.drawer_page.check_drawer_status()
-            
-        # 5. تحديث صفحة الإحصائيات الجزئية
-        if hasattr(self, 'stats_page'):
-            self.stats_page.refresh_data()
+        """Refresh visible tab data without reloading all heavy tabs."""
+        current_widget = self.tabs.currentWidget()
+        self._ensure_tab_loaded(current_widget, force=True)
 
-        # 6. تحديث صفحة الحسابات (التي تحتوي الآن على المشتريات والمصروفات)
-        if hasattr(self, 'accounts_page'):
-            self.accounts_page.refresh_data()
+        if current_widget is not None:
+            self._loaded_tabs = {id(current_widget)}
 
-        # 7. تحديث صفحة المرتجعات (إذا كانت تتطلب تصفير البحث مثلاً)
         if self.user_info:
-            if self.user_info['role_id'] in [99, 1, 2]:
+            if self.user_info["role_id"] in [99, 1, 2]:
                 self.check_low_stock()
-            
-            # دائماً تحقق من حالة الدرج في الفرع للتنبيه
             self.check_drawer_alert()
-
-        print("✅ تم تحديث كافة البيانات بنجاح")
 
     def check_low_stock(self):
         """التحقق من وجود أصناف تحت حد الأمان"""

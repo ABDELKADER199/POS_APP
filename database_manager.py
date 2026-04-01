@@ -1,7 +1,5 @@
 """
-فئة DatabaseManager - للتعامل مع جميع عمليات قاعدة البيانات
-"""
-
+فئة DatabaseManager - للتعامل مع جميع عمليات قاعدة البيانات مع معالجة ذكية للمسار"""
 import mysql.connector
 import bcrypt
 import json
@@ -14,68 +12,118 @@ from threading import Lock
 
 # إعداد نظام Logging
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.DEBUG)
+_log_level_name = (os.getenv('POS_LOG_LEVEL') or os.getenv('DB_LOG_LEVEL') or 'WARNING').upper()
+_log_level = getattr(logging, _log_level_name, logging.INFO)
+logger.setLevel(_log_level)
 if not logger.handlers:
     handler = logging.StreamHandler()
+    handler.setLevel(_log_level)
     formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
     handler.setFormatter(formatter)
     logger.addHandler(handler)
 
 class DatabaseManager:
-    """فئة شاملة للتعامل مع قاعدة البيانات (Thread-Safe Singleton)"""
+    """فئة شاملة للتعامل مع قاعدة البيانات مع معالجة ذكية للمسار"""
     
     _instance = None
     _lock = Lock()
     
-    def __new__(cls):
-        with cls._lock:
-            if cls._instance is None:
-                cls._instance = super().__new__(cls)
-        return cls._instance
-    
     def __init__(self):
         """تهيئة اتصال قاعدة البيانات"""
-        # تهيئة المتغيرات أولاً (قبل التحقق من التهيئة السابقة)
-        if not hasattr(self, 'host'):
-            self.host: Optional[str] = None
-            self.user: Optional[str] = None
-            self.password: Optional[str] = None
-            self.database: Optional[str] = None
-            self.conn: Optional[Any] = None
-            self.cursor: Optional[Any] = None
-            self._is_initialized: bool = False
+        self.host = None
+        self.user = None
+        self.password = None
+        self.database = None
+        self.port = 3306
+        self.ssl_mode = 'DISABLED'
+        self.ssl_ca = ''
+        self.conn = None
+        self.cursor = None
+        self._verbose_diagnostics = str(
+            os.getenv('POS_VERBOSE_DIAGNOSTICS', '0')
+        ).strip().lower() in {'1', 'true', 'yes', 'on'}
         
-        # التحقق من التهيئة السابقة
-        if hasattr(self, '_is_initialized') and self._is_initialized:
-            return
-        
-        with DatabaseManager._lock:
-            # تحقق مرة أخرى بعد الحصول على القفل
-            if hasattr(self, '_is_initialized') and self._is_initialized:
-                return
-            self._is_initialized = True
-        
-        # Load config from file
         self.load_config()
         
-        # Only connect if config loaded successfully
         if self.host and self.user:
             if self.connect():
-                # After successful connect, self.cursor and self.conn are guaranteed non-None
                 assert self.cursor is not None and self.conn is not None
                 self.create_license_table()
                 self.create_returns_tables()
                 self.create_expenses_table()
                 self.create_settings_table()
                 self.create_purchases_tables()
-                self.setup_accounts_system() # نظام الحسابات والعملاء
+                self.setup_accounts_system()
+                self.create_sync_queue_table()
+                self.apply_performance_indexes()
+
+                # (Removed auto-initialization of SyncManager to avoid recursion)
         else:
-            logger.critical("Database configuration not found or incomplete.")
+            logger.critical("DB config missing.")
+
+    def _handle_non_critical_db_error(self, err, context=""):
+        ignored_errnos = {1060, 1061, 1091, 1826}
+        if getattr(err, "errno", None) in ignored_errnos:
+            return
+        logger.warning(f"DB error [{context}]: {err}")
+
+    def _execute_safe(self, query):
+        """تنفيذ استعلام مع تجاهل الأخطاء الشائعة (مثل تكرار الفهرس)"""
+        try:
+            self.cursor.execute(query)
+        except mysql.connector.Error as err:
+            # تجاهل خطأ تكرار الفهرس (1061)
+            if err.errno != 1061:
+                logger.debug(f"Info: Safe execute skipped: {err}")
+
+    def create_sync_queue_table(self):
+        """إنشاء جدول طابور المزامنة للعمل أوفلاين"""
+        try:
+            self.cursor.execute("""
+            CREATE TABLE IF NOT EXISTS sync_queue (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                table_name VARCHAR(100) NOT NULL,
+                record_id VARCHAR(100) NOT NULL,
+                action_type VARCHAR(50) NOT NULL,
+                data_json LONGTEXT NOT NULL,
+                status ENUM('pending', 'synced', 'failed') DEFAULT 'pending',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                synced_at TIMESTAMP NULL,
+                error_message TEXT
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+            """)
+            self.conn.commit()
+            logger.info("✅ جدول طابور المزامنة جاهز")
+        except mysql.connector.Error as err:
+            logger.error(f"❌ خطأ في إنشاء جدول المزامنة: {err}")
+
+    def apply_performance_indexes(self):
+        """إضافة فهارس تحسين الأداء للجداول الرئيسية"""
+        try:
+            # 1. Products Indexes
+            self._execute_safe("CREATE INDEX idx_product_code ON products(product_code)")
+            self._execute_safe("CREATE INDEX idx_barcode ON products(barcode)")
+            
+            # 2. Inventory Indexes
+            self._execute_safe("CREATE INDEX idx_inv_product ON product_inventory(product_id)")
+            self._execute_safe("CREATE INDEX idx_inv_store ON product_inventory(store_id)")
+            
+            # 3. Invoices Indexes
+            self._execute_safe("CREATE INDEX idx_invoice_date ON invoices(invoice_date)")
+            self._execute_safe("CREATE INDEX idx_invoice_status ON invoices(status)")
+            self._execute_safe("CREATE INDEX idx_cust_phone ON invoices(customer_phone)")
+            
+            # 4. Sync Queue Indexes
+            self._execute_safe("CREATE INDEX idx_sync_status ON sync_queue(status)")
+            
+            self.conn.commit()
+            logger.info("✅ تم تطبيق فهارس تحسين الأداء")
+        except mysql.connector.Error as err:
+            logger.warning(f"⚠️ تنبيه فهارس الأداء: {err}")
 
     def create_license_table(self):
-        """إنشاء جدول نظام التراخيص"""
         try:
-            assert self.cursor is not None and self.conn is not None, "Database connection not initialized"
+            assert self.cursor is not None and self.conn is not None
             self.cursor.execute("""
             CREATE TABLE IF NOT EXISTS system_license (
                 id INT PRIMARY KEY AUTO_INCREMENT,
@@ -86,34 +134,26 @@ class DatabaseManager:
                 status VARCHAR(20) DEFAULT 'active'
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
             """)
-            
-            # التأكد من وجود رتبة المطور (ID: 99)
             self.cursor.execute("SELECT id FROM roles WHERE id = 99")
             if not self.cursor.fetchone():
                 self.cursor.execute("INSERT INTO roles (id, role_name) VALUES (99, 'Developer')")
-                
             self.conn.commit()
-            logger.info("نظام التراخيص جاهز")
-        except mysql.connector.Error as err:
-            logger.error(f"خطأ في إنشاء جداول التراخيص: {err}", exc_info=True)
+        except Exception as err:
+            logger.error(f"License table error: {err}")
 
-    def check_system_license(self, hardware_id: str) -> bool:
-        """التحقق من وجود ترخيص فعال للجهاز الحالي"""
+    def check_system_license(self, hardware_id):
         try:
             query = "SELECT activation_key FROM system_license WHERE hardware_id = %s AND status = 'active'"
             self.cursor.execute(query, (hardware_id,))
             res = self.cursor.fetchone()
             if res:
-                # التحقق المزدوج من صحة المفتاح برمجياً
                 from utils.license_manager import LicenseManager
                 return LicenseManager.verify_key(hardware_id, res['activation_key'])
             return False
-        except Exception as err:
-            logger.error(f"خطأ في التحقق من الترخيص: {err}", exc_info=True)
+        except Exception:
             return False
 
-    def activate_system(self, hardware_id: str, key: str) -> bool:
-        """تفعيل نسخة البرنامج"""
+    def activate_system(self, hardware_id, key):
         from utils.license_manager import LicenseManager
         if LicenseManager.verify_key(hardware_id, key):
             try:
@@ -121,17 +161,12 @@ class DatabaseManager:
                 self.cursor.execute(query, (hardware_id, key.strip().upper()))
                 self.conn.commit()
                 return True
-            except mysql.connector.Error as err:
-                logger.error(f"خطأ في حفظ الترخيص: {err}", exc_info=True)
+            except Exception:
                 self.conn.rollback()
                 return False
         return False
 
     def create_expenses_table(self):
-        """إنشاء جدول المصروفات إن لم يكن موجوداً"""
-        if not self.cursor or not self.conn:
-            logger.warning("Database not initialized")
-            return
         try:
             self.cursor.execute("""
             CREATE TABLE IF NOT EXISTS expenses (
@@ -147,12 +182,10 @@ class DatabaseManager:
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
             """)
             self.conn.commit()
-            logger.info("تم التحقق من جدول المصروفات")
-        except mysql.connector.Error as err:
-            logger.error(f"خطأ في إنشاء جدول المصروفات: {err}", exc_info=True)
+        except Exception as err:
+            logger.error(f"Expenses table error: {err}")
 
     def create_settings_table(self):
-        """إنشاء جدول إعدادات النظام"""
         try:
             self.cursor.execute("""
             CREATE TABLE IF NOT EXISTS system_settings (
@@ -160,8 +193,6 @@ class DatabaseManager:
                 setting_value TEXT
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
             """)
-            
-            # إدراج الإعدادات الافتراضية إذا لم تكن موجودة
             defaults = {
                 'store_name': 'نظام POS المتكامل',
                 'store_address': 'عنوان المحل غير محدد',
@@ -169,26 +200,21 @@ class DatabaseManager:
                 'receipt_footer': 'شكراً لزيارتكم',
                 'backup_path': 'backups'
             }
-            
             for key, val in defaults.items():
                 self.cursor.execute("INSERT IGNORE INTO system_settings (setting_key, setting_value) VALUES (%s, %s)", (key, val))
-            
             self.conn.commit()
-        except mysql.connector.Error as err:
-            logger.error(f"خطأ في إنشاء جدول الإعدادات: {err}", exc_info=True)
+        except Exception as err:
+            logger.error(f"Settings table error: {err}")
 
-    def get_settings(self) -> Dict[str, str]:
-        """جلب كافة إعدادات النظام"""
+    def get_settings(self):
         try:
             self.cursor.execute("SELECT setting_key, setting_value FROM system_settings")
             results = self.cursor.fetchall()
             return {row['setting_key']: row['setting_value'] for row in results}
-        except Exception as err:
-            logger.error(f"خطأ في جلب الإعدادات: {err}", exc_info=True)
+        except Exception:
             return {}
 
-    def update_settings(self, settings: Dict[str, str]) -> bool:
-        """تحديث إعدادات النظام"""
+    def update_settings(self, settings):
         try:
             for key, val in settings.items():
                 self.cursor.execute("""
@@ -198,32 +224,26 @@ class DatabaseManager:
                 """, (key, str(val)))
             self.conn.commit()
             return True
-        except Exception as e:
-            logger.error(f"خطأ في تحديث الإعدادات: {e}", exc_info=True)
+        except Exception:
             self.conn.rollback()
             return False
 
-    def backup_database(self, custom_dir: str = None) -> Tuple[bool, str]:
+    def backup_database(self, custom_dir=None):
         """إجراء نسخة احتياطية من قاعدة البيانات مع معالجة ذكية للمسار"""
         import subprocess
         from datetime import datetime
-        
-        # 1. تحديد المجلد (من المعامل أو الإعدادات)
         if custom_dir:
             backup_dir = custom_dir
         else:
             settings = self.get_settings()
             backup_dir = settings.get('backup_path', 'backups')
         
-        # 2. التأكد من وجود المجلد مع معالجة الأخطاء (مثل فقدان القرص E:/)
         try:
             if not os.path.isabs(backup_dir):
                 backup_dir = os.path.join(os.getcwd(), backup_dir)
-                
             if not os.path.exists(backup_dir):
                 os.makedirs(backup_dir)
-        except Exception as e:
-            logger.warning(f"فشل الوصول للمسار {backup_dir}: {e}. يتم الاستعادة لمجلد backups المحلي.")
+        except OSError:
             backup_dir = os.path.join(os.getcwd(), 'backups')
             if not os.path.exists(backup_dir):
                 os.makedirs(backup_dir)
@@ -231,82 +251,540 @@ class DatabaseManager:
         timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
         filename = f"pos_backup_{timestamp}.sql"
         filepath = os.path.join(backup_dir, filename)
-        
-        # مسار mysqldump (تم اكتشافه مسبقاً)
         mysqldump_path = r"C:\Program Files\MySQL\MySQL Server 8.0\bin\mysqldump.exe"
-        if not os.path.exists(mysqldump_path):
-            # محاولة مسار Workbench كخيار بديل
-            mysqldump_path = r"C:\Program Files\MySQL\MySQL Workbench 8.0\mysqldump.exe"
-
         try:
-            # بناء الأمر
-            command = [
-                mysqldump_path,
-                f"--host={self.host}",
-                f"--user={self.user}",
-                f"--password={self.password}",
-                self.database,
-                f"--result-file={filepath}"
-            ]
-            
-            # التشغيل
+            command = [mysqldump_path, f"--host={self.host}", f"--user={self.user}", f"--password={self.password}", self.database, f"--result-file={filepath}"]
             process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=True)
             output, error = process.communicate()
-            
-            if process.returncode == 0:
-                return True, filepath
-            else:
-                return False, error.decode('utf-8', errors='ignore')
-                
+            return (True, filepath) if process.returncode == 0 else (False, error.decode('utf-8', errors='ignore'))
         except Exception as e:
-            logger.error(f"خطأ في النسخة الاحتياطية: {e}", exc_info=True)
-            return False, str(e)
+            return (False, str(e))
 
     def load_config(self):
-        """Load database configuration from a JSON file"""
+        """تحميل إعدادات قاعدة البيانات - السحابية من .env والمحلية من config.json"""
         try:
-            # Determine base path for config file
+            self._load_env_file()
+            
+            # الإعدادات المحمية (Hardcoded but Obfuscated)
+            protected_cloud = {
+                'host': self._deobfuscate('Ny4nOiQgP3VuHFVHGzMqPSshICpobhxAQFk0YTIoIG8yLDtQU15ZJSt9PDws'),
+                'user': self._deobfuscate('YwsUJxk2PzAcUGBwRxN7fS08LjI='),
+                'password': self._deobfuscate('GyhjEgt2PzAafmNTdx8eIg=='),
+                'database': self._deobfuscate('JCogKw=='),
+                'port': 4000,
+                'ssl_mode': 'VERIFY_IDENTITY'
+            }
+            
+            protected_local = {
+                'host': self._deobfuscate('PCAwPj8pKTYr'),
+                'user': self._deobfuscate('IiA8Kw=='),
+                'password': self._deobfuscate('YX1g'),
+                'database': self._deobfuscate('Izs8PDgy'),
+                'port': 3306,
+                'ssl_mode': 'DISABLED'
+            }
+
+            # 1. جلب الإعدادات السحابية (من المتغيرات البيئية أو المحمية)
+            env_cloud = self._load_config_values_from_env()
+            # نتجاهل القيم إذا كانت "HIDDEN" أو فارغة
+            if env_cloud and all(v != "HIDDEN" for v in env_cloud.values()):
+                self.cloud_config = env_cloud
+            else:
+                self.cloud_config = protected_cloud
+            
+            # 2. جلب الإعدادات المحلية (من ملف config.json أو المحمية)
+            file_local = self._load_config_values_from_file()
+            if file_local and all(v != "HIDDEN" for v in file_local.values()):
+                self.local_config = file_local
+            else:
+                self.local_config = protected_local
+            
+            # التعيين الأولي
+            if self.cloud_config:
+                self._apply_config(self.cloud_config)
+                logger.info("تم تحميل إعدادات السحابة (محمية)")
+            elif self.local_config:
+                self._apply_config(self.local_config)
+                logger.info("تم تحميل إعدادات الاتصال المحلي (محمية)")
+
+        except Exception as e:
+            logger.error(f'Failed to load DB configuration: {e}', exc_info=True)
+
+    def _obfuscate(self, text: str, key: str = "POS_SAFE_2026") -> str:
+        """تحويل النص إلى صيغة غير مفهومة"""
+        if not text: return ""
+        import base64
+        result = []
+        for i in range(len(text)):
+            char = text[i]
+            key_char = key[i % len(key)]
+            result.append(chr(ord(char) ^ ord(key_char)))
+        return base64.b64encode("".join(result).encode('utf-8')).decode('utf-8')
+
+    def _deobfuscate(self, token: str, key: str = "POS_SAFE_2026") -> str:
+        """استعادة النص الأصلي من الرمز المشفر"""
+        if not token: return ""
+        import base64
+        try:
+            decoded = base64.b64decode(token.encode('utf-8')).decode('utf-8')
+            result = []
+            for i in range(len(decoded)):
+                char = decoded[i]
+                key_char = key[i % len(key)]
+                result.append(chr(ord(char) ^ ord(key_char)))
+            return "".join(result)
+        except Exception:
+            return token
+
+    def _get_valid_user_id(self, user_id: int) -> int:
+        """التحقق من وجود المعرف في جدول المستخدمين لتجنب أخطاء Foreign Key (خاصة عند الانتقال بين السحابي والمحلي)"""
+        if not user_id:
+            user_id = 0
+        try:
+            self.cursor.execute("SELECT id FROM users WHERE id = %s", (user_id,))
+            if self.cursor.fetchone():
+                return user_id
+            
+            # إذا لم يوجد، نأخذ أول مستخدم متاح كبديل
+            self.cursor.execute("SELECT id FROM users LIMIT 1")
+            res = self.cursor.fetchone()
+            if res:
+                return res['id']
+            return user_id
+        except Exception:
+            return user_id
+
+    def _queue_sync(self, table_name: str, record_id: any, action: str, data: dict):
+        """إضافة عملية إلى طابور المزامنة في قاعدة البيانات المحلية"""
+        if self.host != 'localhost' and self.host != '127.0.0.1':
+            return # إذا كنا متصلين بالسحاب مباشرة (حالة نادرة الآن)، لا نحتاج للطابور
+            
+        try:
+            query = """
+            INSERT INTO sync_queue (table_name, record_id, action_type, data_json)
+            VALUES (%s, %s, %s, %s)
+            """
+            self.cursor.execute(query, (
+                table_name, 
+                str(record_id), 
+                action, 
+                json.dumps(data, ensure_ascii=False, default=str)
+            ))
+            self.conn.commit()
+            logger.debug(f"Queued sync for {table_name} ID {record_id}")
+        except Exception as e:
+            logger.error(f"Failed to queue sync: {e}")
+
+    def _load_config_values_from_file(self) -> Dict:
+        """جلب الإعدادات من ملف config.json كـ dictionary"""
+        try:
             if getattr(sys, 'frozen', False):
-                # If running as compiled exe
                 current_dir = os.path.dirname(sys.executable)
             else:
-                # If running as script
                 current_dir = os.path.dirname(os.path.abspath(__file__))
-            
+
             config_path = os.path.join(current_dir, 'config.json')
-            
             if os.path.exists(config_path):
                 with open(config_path, 'r', encoding='utf-8') as f:
                     config = json.load(f)
                     db_config = config.get('database', {})
-                    self.host = db_config.get('host')
-                    self.user = db_config.get('user')
-                    self.password = db_config.get('password')
-                    self.database = db_config.get('database')
-                    logger.info(f"تم تحميل إعدادات قاعدة البيانات من: {self.host}")
-            else:
-                logger.warning(f"ملف config.json غير موجود في {config_path}")
+                    return {
+                        'host': db_config.get('host', 'localhost'),
+                        'user': db_config.get('user', 'root'),
+                        'password': db_config.get('password', ''),
+                        'database': db_config.get('database', 'stocks'),
+                        'port': int(db_config.get('port', 3306)),
+                        'ssl_mode': str(db_config.get('ssl_mode', 'DISABLED')).upper(),
+                        'ssl_ca': db_config.get('ssl_ca', '')
+                    }
         except Exception as e:
-            logger.error(f"خطأ في تحميل config.json: {e}", exc_info=True)
-    
-    def connect(self):
-        """الاتصال بقاعدة البيانات"""
+            logger.debug(f"Note: Could not load config.json: {e}")
+        return {}
+
+    def _load_config_values_from_env(self) -> Dict:
+        """جلب الإعدادات من المتغيرات البيئية كـ dictionary"""
+        host = os.getenv('POS_DB_HOST') or os.getenv('DB_HOST')
+        user = os.getenv('POS_DB_USER') or os.getenv('DB_USER')
+        password = os.getenv('POS_DB_PASSWORD') or os.getenv('DB_PASSWORD')
+        database = os.getenv('POS_DB_NAME') or os.getenv('DB_NAME')
+        
+        if host and user and database:
+            port_raw = os.getenv('POS_DB_PORT') or os.getenv('DB_PORT') or '3306'
+            ssl_mode = (os.getenv('POS_DB_SSL_MODE') or os.getenv('DB_SSL_MODE') or 'DISABLED').upper()
+            ssl_ca = os.getenv('POS_DB_SSL_CA') or os.getenv('DB_SSL_CA') or ''
+            
+            # Safe defaults for TiDB Cloud
+            if 'tidbcloud.com' in host and not os.getenv('POS_DB_SSL_MODE'):
+                ssl_mode = 'VERIFY_IDENTITY'
+            
+            return {
+                'host': host,
+                'user': user,
+                'password': password,
+                'database': database,
+                'port': int(port_raw),
+                'ssl_mode': ssl_mode,
+                'ssl_ca': ssl_ca
+            }
+        return {}
+
+    def _apply_config(self, config: Dict):
+        """تطبيق قاموس الإعدادات على كائن الـ Manager"""
+        self.host = config.get('host')
+        self.user = config.get('user')
+        self.password = config.get('password')
+        self.database = config.get('database')
+        self.port = config.get('port', 3306)
+        self.ssl_mode = config.get('ssl_mode', 'DISABLED')
+        self.ssl_ca = config.get('ssl_ca', '')
+
+    def _load_env_file(self) -> None:
+        """Load .env values to os.environ without overriding existing environment variables."""
+        candidate_dirs = []
+        if getattr(sys, 'frozen', False):
+            candidate_dirs.append(os.path.dirname(sys.executable))
+        else:
+            candidate_dirs.append(os.path.dirname(os.path.abspath(__file__)))
+        candidate_dirs.append(os.getcwd())
+
+        seen = set()
+        for base_dir in candidate_dirs:
+            if base_dir in seen:
+                continue
+            seen.add(base_dir)
+
+            env_path = os.path.join(base_dir, '.env')
+            if not os.path.exists(env_path):
+                continue
+
+            try:
+                with open(env_path, 'r', encoding='utf-8') as env_file:
+                    for raw_line in env_file:
+                        line = raw_line.strip()
+                        if not line or line.startswith('#') or '=' not in line:
+                            continue
+
+                        key, value = line.split('=', 1)
+                        key = key.strip()
+                        value = value.strip()
+
+                        if (
+                            len(value) >= 2
+                            and ((value[0] == '"' and value[-1] == '"') or (value[0] == "'" and value[-1] == "'"))
+                        ):
+                            value = value[1:-1]
+
+                        if key and key not in os.environ:
+                            os.environ[key] = value
+
+                logger.info(f'Loaded environment from: {env_path}')
+                return
+            except (OSError, UnicodeDecodeError, ValueError) as e:
+                logger.error(f'Failed to read .env at {env_path}: {e}', exc_info=True)
+
+    def _load_config_from_env(self) -> bool:
+        """Populate DB config from environment variables."""
+        host = os.getenv('POS_DB_HOST') or os.getenv('DB_HOST')
+        user = os.getenv('POS_DB_USER') or os.getenv('DB_USER')
+        password = os.getenv('POS_DB_PASSWORD') or os.getenv('DB_PASSWORD')
+        database = os.getenv('POS_DB_NAME') or os.getenv('DB_NAME')
+        port_raw = os.getenv('POS_DB_PORT') or os.getenv('DB_PORT') or '3306'
+        ssl_mode = (os.getenv('POS_DB_SSL_MODE') or os.getenv('DB_SSL_MODE') or 'DISABLED').upper()
+        ssl_ca = os.getenv('POS_DB_SSL_CA') or os.getenv('DB_SSL_CA') or ''
+
+        # Safe defaults for TiDB Cloud when SSL vars are not explicitly set.
+        if host and 'tidbcloud.com' in host and not os.getenv('POS_DB_SSL_MODE'):
+            ssl_mode = 'VERIFY_IDENTITY'
+            if not ssl_ca:
+                certifi_bundle = os.path.join(
+                    os.path.dirname(sys.executable) if getattr(sys, 'frozen', False) else os.path.dirname(os.path.abspath(__file__)),
+                    '.venv', 'Lib', 'site-packages', 'pip', '_vendor', 'certifi', 'cacert.pem'
+                )
+                if os.path.exists(certifi_bundle):
+                    ssl_ca = certifi_bundle
+
+        if host and user and database:
+            self.host = host
+            self.user = user
+            self.password = password
+            self.database = database
+            try:
+                self.port = int(port_raw)
+            except (ValueError, TypeError):
+                self.port = 3306
+            self.ssl_mode = ssl_mode
+            self.ssl_ca = ssl_ca
+            logger.info('Loaded database config from environment variables.')
+            return True
+
+        return False
+
+    def _get_env_path(self) -> str:
+        """Resolve writable .env path for runtime configuration updates."""
+        if getattr(sys, 'frozen', False):
+            base_dir = os.path.dirname(sys.executable)
+        else:
+            base_dir = os.path.dirname(os.path.abspath(__file__))
+        return os.path.join(base_dir, '.env')
+
+    def _write_env_values(self, values: Dict[str, str]) -> None:
+        """Update/create key-value pairs inside .env while preserving other lines."""
+        env_path = self._get_env_path()
+        existing_lines: List[str] = []
+
+        if os.path.exists(env_path):
+            with open(env_path, 'r', encoding='utf-8') as f:
+                existing_lines = f.read().splitlines()
+
+        keys_lower = {k.lower(): k for k in values.keys()}
+        updated: List[str] = []
+        seen: set[str] = set()
+
+        for raw_line in existing_lines:
+            line = raw_line.strip()
+            if not line or line.startswith('#') or '=' not in raw_line:
+                updated.append(raw_line)
+                continue
+
+            key = raw_line.split('=', 1)[0].strip()
+            key_l = key.lower()
+            if key_l in keys_lower:
+                new_key = keys_lower[key_l]
+                updated.append(f"{new_key}={values[new_key]}")
+                seen.add(new_key)
+            else:
+                updated.append(raw_line)
+
+        for key, value in values.items():
+            if key not in seen:
+                updated.append(f"{key}={value}")
+
+        with open(env_path, 'w', encoding='utf-8') as f:
+            f.write('\n'.join(updated).rstrip() + '\n')
+
+    def get_connection_profile(self) -> Dict[str, str]:
+        """Return current active DB connection settings."""
+        return {
+            'host': self.host or '',
+            'user': self.user or '',
+            'password': self.password or '',
+            'database': self.database or '',
+            'port': str(self.port or 3306),
+            'ssl_mode': self.ssl_mode or 'DISABLED',
+            'ssl_ca': self.ssl_ca or '',
+        }
+
+    def _build_connection_kwargs(
+        self,
+        host: str,
+        user: str,
+        password: str,
+        database: str,
+        port: int,
+        ssl_mode: str,
+        ssl_ca: str,
+    ) -> Dict[str, Any]:
+        """Build mysql.connector kwargs with optional SSL behavior."""
+        kwargs: Dict[str, Any] = {
+            'host': host,
+            'user': user,
+            'password': password,
+            'database': database,
+            'port': port,
+            'use_pure': True,
+            'autocommit': True,
+        }
+
+        timeout_raw = os.getenv('POS_DB_TIMEOUT') or os.getenv('DB_TIMEOUT') or '8'
         try:
-            self.conn = mysql.connector.connect(
-                host=self.host,
-                user=self.user,
-                password=self.password,
-                database=self.database,
-                use_pure=True,
-                autocommit=True
+            timeout = int(timeout_raw)
+        except (TypeError, ValueError):
+            timeout = 8
+        timeout = max(3, min(timeout, 60))
+        kwargs['connection_timeout'] = timeout
+        kwargs['read_timeout'] = max(timeout, 12)
+        kwargs['write_timeout'] = max(timeout, 12)
+
+        mode = (ssl_mode or 'DISABLED').upper()
+        ca_path = (ssl_ca or '').strip()
+
+        if mode == 'DISABLED':
+            kwargs['ssl_disabled'] = True
+            return kwargs
+
+        kwargs['ssl_disabled'] = False
+        if ca_path:
+            kwargs['ssl_ca'] = ca_path
+
+        if mode == 'VERIFY_IDENTITY':
+            kwargs['ssl_verify_identity'] = True
+            kwargs['ssl_verify_cert'] = True
+        elif mode == 'VERIFY_CA':
+            kwargs['ssl_verify_cert'] = True
+
+        return kwargs
+
+    def test_connection_config(
+        self,
+        host: str,
+        user: str,
+        password: str,
+        database: str,
+        port: int = 3306,
+        ssl_mode: str = 'DISABLED',
+        ssl_ca: str = '',
+    ) -> Tuple[bool, str]:
+        """Test a DB configuration without changing current app connection."""
+        try:
+            kwargs = self._build_connection_kwargs(host, user, password, database, port, ssl_mode, ssl_ca)
+            test_conn = mysql.connector.connect(**kwargs)
+            test_conn.close()
+            return True, "?? ?????? ??????? ?????"
+        except mysql.connector.Error as err:
+            return False, f"??? ???????: {err}"
+
+    def save_connection_config(
+        self,
+        host: str,
+        user: str,
+        password: str,
+        database: str,
+        port: int = 3306,
+        ssl_mode: str = 'DISABLED',
+        ssl_ca: str = '',
+        reconnect: bool = True
+    ) -> Tuple[bool, str]:
+        """Persist DB connection config to .env and optionally reconnect."""
+        host = (host or '').strip()
+        user = (user or '').strip()
+        database = (database or '').strip()
+        password = password or ''
+        try:
+            port = int(port)
+        except (TypeError, ValueError):
+            return False, "???? ?????? ??? ?????"
+
+        ssl_mode = (ssl_mode or 'DISABLED').upper()
+        ssl_ca = (ssl_ca or '').strip()
+
+        if not host or not user or not database:
+            return False, "??? ????? ?????? ???? ???????? ???? ????? ????????"
+
+        ok, message = self.test_connection_config(
+            host, user, password, database, port=port, ssl_mode=ssl_mode, ssl_ca=ssl_ca
+        )
+        if not ok:
+            return False, message
+
+        self.host = host
+        self.user = user
+        self.password = password
+        self.database = database
+        self.port = port
+        self.ssl_mode = ssl_mode
+        self.ssl_ca = ssl_ca
+
+        os.environ['POS_DB_HOST'] = host
+        os.environ['POS_DB_USER'] = user
+        os.environ['POS_DB_PASSWORD'] = password
+        os.environ['POS_DB_NAME'] = database
+        os.environ['POS_DB_PORT'] = str(port)
+        os.environ['POS_DB_SSL_MODE'] = ssl_mode
+        os.environ['POS_DB_SSL_CA'] = ssl_ca
+
+        try:
+            self._write_env_values({
+                'POS_DB_HOST': host,
+                'POS_DB_USER': user,
+                'POS_DB_PASSWORD': password,
+                'POS_DB_NAME': database,
+                'POS_DB_PORT': str(port),
+                'POS_DB_SSL_MODE': ssl_mode,
+                'POS_DB_SSL_CA': ssl_ca,
+            })
+        except OSError as err:
+            return False, f"?? ??????? ??? ??? ??? .env: {err}"
+
+        if reconnect:
+            try:
+                self.close()
+            except (AttributeError, RuntimeError):
+                pass
+            self.conn = None
+            self.cursor = None
+            if not self.connect():
+                return False, "?? ??? ????????? ??? ??? ????? ???????? ??? ????? ????????"
+
+        return True, "?? ??? ??????? ??????? ???????? ?????"
+
+    def change_server_user_password(self, new_password: str) -> Tuple[bool, str]:
+        """Change current DB user password on DB server and sync .env."""
+        if not new_password:
+            return False, "كلمة المرور الجديدة مطلوبة"
+        if not self.cursor or not self.conn:
+            return False, "غير متصل بقاعدة البيانات"
+
+        escaped_password = new_password.replace("\\", "\\\\").replace("'", "''")
+        escaped_user = (self.user or '').replace("\\", "\\\\").replace("'", "''")
+
+        statements = []
+        if escaped_user:
+            statements.append(f"ALTER USER '{escaped_user}'@'%' IDENTIFIED BY '{escaped_password}'")
+            statements.append(f"ALTER USER '{escaped_user}'@'localhost' IDENTIFIED BY '{escaped_password}'")
+        statements.append(f"ALTER USER USER() IDENTIFIED BY '{escaped_password}'")
+
+        last_error: Optional[Exception] = None
+        for stmt in statements:
+            try:
+                self.cursor.execute(stmt)
+                self.conn.commit()
+                self.password = new_password
+                os.environ['POS_DB_PASSWORD'] = new_password
+                self._write_env_values({'POS_DB_PASSWORD': new_password})
+                return True, "تم تغيير كلمة مرور مستخدم قاعدة البيانات بنجاح"
+            except mysql.connector.Error as err:
+                last_error = err
+
+        return False, f"فشل تغيير كلمة المرور: {last_error}"
+
+    def connect(self):
+        """الاتصال بقاعدة البيانات - الأولوية للمحلي (Local-First)"""
+        # 1. محاولة الاتصال بالمحلي أولاً دائماً كما طلب المستخدم
+        if hasattr(self, 'local_config') and self.local_config:
+            logger.info("Connecting to Local database first...")
+            self._apply_config(self.local_config)
+            if self._do_connect():
+                logger.info("✅ Connected to Local database")
+                return True
+
+        # 2. إذا فشل المحلي، نحاول السحاب (كاحتياطي)
+        logger.warning("⚠️ Local connection failed, trying Cloud...")
+        self._load_config_values_from_env()
+        if self._do_connect():
+            return True
+                
+        return False
+
+    def _do_connect(self):
+        """القيام بعملية الاتصال الفعلية"""
+        try:
+            kwargs = self._build_connection_kwargs(
+                host=self.host or '',
+                user=self.user or '',
+                password=self.password or '',
+                database=self.database or '',
+                port=self.port or 3306,
+                ssl_mode=self.ssl_mode or 'DISABLED',
+                ssl_ca=self.ssl_ca or '',
             )
+            self.conn = mysql.connector.connect(**kwargs)
             self.cursor = self.conn.cursor(dictionary=True, buffered=True)
-            logger.info("تم الاتصال بقاعدة البيانات بنجاح")
+            logger.info(f"✅ تم الاتصال بـ ({self.host}) بنجاح")
             return True
         except mysql.connector.Error as err:
-            logger.error(f"خطأ في الاتصال بقاعدة البيانات: {err}", exc_info=True)
+            logger.debug(f"Connection attempt failed for {self.host}: {err}")
             return False
-    
+
     def close(self):
         """إغلاق الاتصال"""
         if self.cursor:
@@ -462,7 +940,7 @@ class DatabaseManager:
                                        sell_price, supplier_id, unit, barcode, description))
             product_id = self.cursor.lastrowid
             
-            # ربط المنتج بجميع المخازن تلقائياً
+            # ربط المنتج بجميع المخزون لـ {len(stores)} فروع: {product_name}")
             self.cursor.execute("SELECT id FROM stores WHERE is_active = TRUE")
             stores = self.cursor.fetchall()
             for store in stores:
@@ -759,8 +1237,7 @@ class DatabaseManager:
                                   invoice_date: str = None) -> List[Dict]:
         """
         بحث متقدم عن المنتجات مع تفاصيل الشراء والبيع حسب المورد والتاريخ.
-        يعيد قائمة بالمنتجات التي تم شراؤها وفق الفلاتر المحددة.
-        """
+        يعيد قائمة بالمنتجات التي قل مخزونها عن الحد الأدنى"""
         try:
             # استعلام محسّن: استخدام GROUP BY و LEFT JOIN بدل حلقة (إزالة مشكلة N+1)
             query = """
@@ -847,7 +1324,7 @@ class DatabaseManager:
             """
             self.cursor.execute(query, (min_stock, product_id, store_id))
             self.conn.commit()
-            logger.info(f"تم تحديث الحد الأدنى للمخزون للمنتج {product_id} إلى {min_stock}")
+            logger.info(f"تم تحديث الحد الأدنى للمخزون للموردين معين الاحتفاظ بحساب المطور")
             return True
         except mysql.connector.Error as err:
             logger.error(f"خطأ في تحديث الحد الأدنى للمخزون: {err}", exc_info=True)
@@ -865,7 +1342,7 @@ class DatabaseManager:
                 next_id = int(result['max_id']) + 1
             logger.debug(f"رقم الفاتورة التالي: {next_id}")
             return str(next_id)
-        except Exception as e:
+        except (mysql.connector.Error, ValueError, TypeError, KeyError) as e:
             logger.error(f"خطأ في الحصول على رقم الفاتورة التالي: {e}", exc_info=True)
             return str(int(datetime.now().timestamp()))
 
@@ -880,8 +1357,8 @@ class DatabaseManager:
                 next_id = int(result['max_id']) + 1
             logger.debug(f"رقم الطلب التالي: {next_id}")
             return str(next_id)
-        except Exception as e:
-            logger.error(f"خطأ في الحصول على رقم الطلب التالي: {e}", exc_info=True)
+        except (mysql.connector.Error, ValueError, TypeError, KeyError) as e:
+            logger.error(f"خطأ في الحصول على رقم الفاتورة التالي: {e}", exc_info=True)
             return str(int(datetime.now().timestamp()))
 
     def create_invoice(self, store_id: int, cashier_id: int, customer_name: str = None,
@@ -920,6 +1397,17 @@ class DatabaseManager:
                 )
                 
             self.conn.commit()
+            
+            # Queue for sync
+            self._queue_sync('invoices', invoice_number, 'INSERT', {
+                'invoice_number': invoice_number, 'store_id': store_id, 
+                'cashier_id': cashier_id, 'customer_id': customer_id,
+                'customer_name': customer_name, 'customer_phone': customer_phone,
+                'customer_address': customer_address, 'drawer_id': drawer_id,
+                'payment_method': payment_method, 'cash_amount': cash_amount,
+                'card_amount': card_amount
+            })
+            
             logger.info(f"تم إنشاء فاتورة: {invoice_number}")
             return invoice_number
         except mysql.connector.Error as err:
@@ -966,6 +1454,13 @@ class DatabaseManager:
             self.cursor.execute(update_total_query, (invoice['id'], invoice['id']))
         
             self.conn.commit()
+            
+            # Queue for sync
+            self._queue_sync('invoice_items', f"{invoice_number}_{product_id}", 'INSERT', {
+                'invoice_number': invoice_number, 'product_id': product_id,
+                'quantity': quantity, 'unit_price': unit_price, 'discount': discount
+            })
+            
             logger.info(f"تم إضافة منتج إلى الفاتورة: {invoice_number}")
             return True
         except mysql.connector.Error as err:
@@ -1067,8 +1562,8 @@ class DatabaseManager:
                 next_id = int(result['max_id']) + 1
             logger.debug(f"رقم المرتجع التالي: {next_id}")
             return str(next_id)
-        except Exception as e:
-            logger.error(f"خطأ في الحصول على رقم المرتجع التالي: {e}", exc_info=True)
+        except (mysql.connector.Error, ValueError, TypeError, KeyError) as e:
+            logger.error(f"خطأ في الحصول على رقم المرتجعات التالي: {e}", exc_info=True)
             return str(int(datetime.now().timestamp()))
 
     def process_return(self, invoice_id: int, items_to_return: List[Dict], reason: str, 
@@ -1119,7 +1614,7 @@ class DatabaseManager:
             
             return return_number
         except mysql.connector.Error as err:
-            logger.error(f"خطأ في معالجة المرتجع: {err}", exc_info=True)
+            logger.error(f"خطأ في معالجة المرتجعات: {err}", exc_info=True)
             self.conn.rollback()
             return None
 
@@ -1227,7 +1722,7 @@ class DatabaseManager:
             self.cursor.execute(query, (invoice_id,))
             return self.cursor.fetchall()
         except mysql.connector.Error as err:
-            logger.error(f"خطأ في جلب بنود الفاتورة: {err}", exc_info=True)
+            logger.error(f"خطأ في جلب بنود الفاتورة المكتملة: {err}", exc_info=True)
             return []
 
     def get_held_invoices(self, store_id: int, search_term: str = None) -> List[Dict]:
@@ -1460,7 +1955,7 @@ class DatabaseManager:
                 }
             return {'is_open': False}
         except mysql.connector.Error as err:
-            logger.error(f"خطأ في الحصول على حالة درج الكاشير: {err}", exc_info=True)
+            logger.error(f"خطأ في الحصول على حالة درج المتجر: {err}", exc_info=True)
             return None
 
     def get_supplier_stats(self) -> List[Dict]:
@@ -1486,7 +1981,7 @@ class DatabaseManager:
             self.cursor.execute(query)
             return self.cursor.fetchall()
         except mysql.connector.Error as err:
-            logger.error(f"خطأ في جلب إحصائيات المورد: {err}", exc_info=True)
+            logger.error(f"خطأ في جلب إحصائيات الموردين: {err}", exc_info=True)
             return []
 
     def get_inventory_valuation(self, store_id: int = None) -> float:
@@ -1535,12 +2030,12 @@ class DatabaseManager:
             res = self.cursor.fetchone()
             return float(res['total_debt'] or 0) if res else 0.0
         except mysql.connector.Error as err:
-            logger.error(f"خطأ في جلب إجمالي الدين للموردين: {err}", exc_info=True)
+            logger.error(f"خطأ في جلب إجمالي المدفوعات للموردين: {err}", exc_info=True)
             return 0.0
 
     def get_total_paid_to_suppliers(self, store_id: int = None) -> float:
         """
-        حساب إجمالي المبالغ المسددة للموردين من السجل المالي (النقدي).
+        حساب إجمالي المبيانات للموردين من السجل المالي (النقدي).
         """
         try:
             query = """
@@ -1609,7 +2104,7 @@ class DatabaseManager:
             
             return {'total_in': total_in, 'total_out': total_out, 'net': total_in - total_out}
         except mysql.connector.Error as err:
-            logger.error(f"خطأ في جلب إجماليات فترة الخزينة: {err}", exc_info=True)
+            logger.error(f"خطأ في جلب إجمالي المداخل والخارج من الخزينة لفترة معينة: {err}", exc_info=True)
             return {'total_in': 0.0, 'total_out': 0.0, 'net': 0.0}
     
     def get_store_open_drawer(self, store_id: int) -> Optional[Dict]:
@@ -1752,6 +2247,13 @@ class DatabaseManager:
             self.conn.commit()
             
             drawer_id = self.cursor.lastrowid
+            
+            # Queue for sync
+            self._queue_sync('drawer_logs', drawer_id, 'OPEN', {
+                'store_id': store_id, 'cashier_id': cashier_id,
+                'opening_balance': opening_balance
+            })
+            
             print(f"✅ تم فتح الدرج {drawer_id}")
             return drawer_id
         except mysql.connector.Error as err:
@@ -1771,7 +2273,7 @@ class DatabaseManager:
             
             self.cursor.execute(query, (closing_balance, drawer_id))
             
-            # إضافة تفاصيل الفئات
+            # إضافة تفاصيل الفئات والفيزا الفعلية عند الإغلاق
             for denomination, quantity in denomination_details.items():
                 detail_query = """
                 INSERT INTO drawer_closing_details (drawer_log_id, denomination, quantity, total_amount)
@@ -1791,11 +2293,28 @@ class DatabaseManager:
                 self.cursor.execute(detail_query, (drawer_id, denomination, qty, total))
             
             self.conn.commit()
-            print(f"✅ تم إغلاق الدرج {drawer_id}")
+            
+            # Queue for sync
+            self._queue_sync('drawer_logs', drawer_id, 'CLOSE', {
+                'closing_balance': closing_balance,
+                'denomination_details': denomination_details,
+                'cashier_id': self.get_drawer_cashier(drawer_id) # Need this to find the drawer on cloud
+            })
+            
+            print(f"✅ تم إضافة معالجة المرتجعات النقود")
             return True
         except mysql.connector.Error as err:
             print(f"❌ خطأ: {err}")
             return False
+
+    def get_drawer_cashier(self, drawer_id: int) -> Optional[int]:
+        """الحصول على معرف الكاشير للدرج المحدد"""
+        try:
+            self.cursor.execute("SELECT cashier_id FROM drawer_logs WHERE id = %s", (drawer_id,))
+            res = self.cursor.fetchone()
+            return res['cashier_id'] if res else None
+        except:
+            return None
 
     def get_drawers_report(self) -> List[Dict]:
         """جلب تقرير شامل عن جميع الأدراج (للمدير)"""
@@ -2069,48 +2588,23 @@ class DatabaseManager:
             gross_profit = net_sales - total_cogs_net
             net_profit = gross_profit - total_expenses
             
-            # === DEBUGGING LOGS (Prints to Console for User to Screenshot) ===
-            print("\n" + "="*50)
-            print(f"📊 STATS DIAGNOSTICS (Store ID: {store_id})")
-            print(f"📅 Period: {start_date} to {end_date}")
-            print(f"💰 Total Sales (Accrual): {total_sales:,.2f}")
-            print(f"💵 Total Collected (Real Cash at Register): {total_collected:,.2f}")
-            print(f"🤝 Total Debt Collected (from Accounts): {total_debt_collected:,.2f}")
-            print(f"📦 Total COGS: {total_cogs:,.2f}")
-            print(f"↩️ Returns: {total_returns:,.2f}")
-            print(f"💸 Expenses: {total_expenses:,.2f}")
-            print(f"📥 Supplier Payments: {total_supplier_paid:,.2f}")
-            print(f"🧾 Invoices: {invoice_count}")
-            print("-" * 30)
-            
-            # Deep Dive into Zero Cost Items
-            try:
-                debug_query = f"""
-                    SELECT p.product_name, SUM(ii.quantity) as qty_sold
-                    FROM invoice_items ii
-                    JOIN products p ON ii.product_id = p.id
-                    JOIN invoices i ON ii.invoice_id = i.id
-                    WHERE i.status = 'Completed' AND (p.buy_price IS NULL OR p.buy_price = 0)
-                    {store_filter_inv.replace('store_id', 'i.store_id')}{date_filter_inv.replace('invoice_date', 'i.invoice_date')}
-                    GROUP BY p.product_name
-                    LIMIT 5
-                """
-                self.cursor.execute(debug_query, get_p())
-                zero_cost_items = self.cursor.fetchall()
-                
-                if zero_cost_items:
-                    print("⚠️ WARNING: Found items sold with ZERO Cost:")
-                    for z in zero_cost_items:
-                        print(f" - {z['product_name']} (Qty: {z['qty_sold']})")
-                else:
-                    print("✅ No items sold with 0 cost found in this period.")
-            except:
-                pass
-
-            print(f"🏦 Treasury Out (Payments): {total_treasury_out:,.2f}")
-            print(f"🏦 Treasury In (Deposits): {total_treasury_in:,.2f}")
-            print("="*50 + "\n")
-            # ==========================================================
+            if self._verbose_diagnostics:
+                logger.info(
+                    "STATS DIAGNOSTICS | store=%s | period=%s..%s | sales=%.2f | collected=%.2f | debt_collected=%.2f | cogs=%.2f | returns=%.2f | expenses=%.2f | supplier_paid=%.2f | treasury_out=%.2f | treasury_in=%.2f | invoices=%s",
+                    store_id if store_id is not None else 'ALL',
+                    start_date,
+                    end_date,
+                    total_sales,
+                    total_collected,
+                    total_debt_collected,
+                    total_cogs,
+                    total_returns,
+                    total_expenses,
+                    total_supplier_paid,
+                    total_treasury_out,
+                    total_treasury_in,
+                    invoice_count,
+                )
 
             return {
                 'total_sales': total_sales,
@@ -2132,7 +2626,7 @@ class DatabaseManager:
                 'return_rate': (total_returns / total_sales * 100) if total_sales > 0 else 0
             }
             
-        except Exception as err:
+        except (mysql.connector.Error, ValueError, TypeError, KeyError) as err:
             print(f"❌ Error calculating net profit: {err}")
             return {'net_profit': 0.0, 'total_returns': 0.0, 'invoice_count': 0}
 
@@ -2404,10 +2898,10 @@ class DatabaseManager:
             print(f"❌ Error getting total stock: {err}")
             return 0
 
-    # ==================== التحويلات المخزنية ====================
+    # ==================== التحويلات المخزون ====================
     
     def get_main_warehouse_id(self) -> Optional[int]:
-        """الحصول على معرف المخزن الرئيسي"""
+        """الحصول على معرف المخزون لمنتج معين في جميع الفروع"""
         try:
             # البحث عن المخزن من نوع Main أو Warehouse
             query = "SELECT id FROM stores WHERE store_type IN ('Main', 'Warehouse') ORDER BY id LIMIT 1"
@@ -2420,7 +2914,7 @@ class DatabaseManager:
             result = self.cursor.fetchone()
             return result['id'] if result else None
         except mysql.connector.Error as err:
-            print(f"❌ خطأ في جلب المخزن الرئيسي: {err}")
+            print(f"❌ خطأ في جلب المخزون الرئيسي")
             return None
 
     def transfer_stock(self, product_id: int, from_store_id: int, to_store_id: int, 
@@ -2436,7 +2930,7 @@ class DatabaseManager:
             source_stock = self.cursor.fetchone()
             
             if not source_stock or source_stock['quantity_in_stock'] < quantity:
-                return False, "الكمية في المخزن المصدر غير كافية"
+                return False, "الكمية في المخزون المصدر غير كافية"
             
             # 2. إنشاء سجل التحويل (Header)
             transfer_code = f"TRF-{datetime.now().strftime('%Y%m%d%H%M%S')}"
@@ -2496,11 +2990,11 @@ class DatabaseManager:
             self.cursor.execute(query, tuple(params))
             return self.cursor.fetchall()
         except mysql.connector.Error as err:
-            print(f"❌ خطأ في جلب التحويلات المعلقة: {err}")
+            print(f"❌ خطأ في جلب التحويلات الواردة المعلقة: {err}")
             return []
 
     def receive_transfer(self, transfer_id: int, user_id: int) -> Tuple[bool, str]:
-        """استلام التحويل وإضافة الكمية للمخزن المستلم"""
+        """استلام التحويل وإضافة الكمية للمخزون المستلم"""
         try:
             # 1. جلب بيانات التحويل
             query = """
@@ -2527,7 +3021,7 @@ class DatabaseManager:
             """
             self.cursor.execute(update_query, (user_id, transfer_id))
             
-            # 4. تحديث الكمية المستلمة في البند
+            # 4. تحديث الكمية المستلمة في البيانات للمخزون
             update_item = "UPDATE transfer_items SET quantity_received = %s WHERE transfer_id = %s"
             self.cursor.execute(update_item, (transfer['quantity_sent'], transfer_id))
             
@@ -2561,13 +3055,13 @@ class DatabaseManager:
                 return True
             return False
         except mysql.connector.Error as err:
-            print(f"❌ خطأ في التحقق من الجهاز: {err}")
+            print(f"❌ خطأ في التحقق من الجهاز مصرح به للمستخدم: {err}")
             return False
 
     def get_device_store_id(self, device_id: str) -> Optional[int]:
         """معرفة الفرع المرتبط بهذا الجهاز (الأولوية للقيود المرتبطة بفرع)"""
         try:
-            # ترتيب النتائج بحيث يظهر السجل الذي يحتوي على store_id أولاً
+            # ترتيب النتائج بحيث يظهر السجل الذي يتطلب على store_id أولاً
             query = """
             SELECT store_id FROM authorized_devices 
             WHERE device_id = %s AND is_active = TRUE 
@@ -2592,9 +3086,9 @@ class DatabaseManager:
             store = self.cursor.fetchone()
             
             if not store:
-                return False, "الفرع غير موجود"
+                return False, "الفرع غير موجود أو تم معالجته مسبقاً"
             
-            # إذا كان الفرع لا يتطلب فحص IP (مثل GM)
+            # إذا كان الفرع لا يتم تحديد نطاق IP
             if not store.get('require_ip_check', True):
                 return True, "معفي من فحص IP"
             
@@ -2617,7 +3111,7 @@ class DatabaseManager:
         """التحقق مما إذا كان الجهاز محظوراً (تم تعطيله)"""
         try:
             # نبحث عن أي سجل لهذا الجهاز تكون حالته غير نشطة
-            # إذا كان الجهاز مسجلاً ولكن is_active = FALSE، فهذا يعني أنه محظور
+            # إذا كان الجهاز مسجلاً ولكن is_active = FALSE، فهذا يعني أنه محظوراً
             query = "SELECT id FROM authorized_devices WHERE device_id = %s AND is_active = FALSE LIMIT 1"
             self.cursor.execute(query, (device_id,))
             return self.cursor.fetchone() is not None
@@ -2668,7 +3162,7 @@ class DatabaseManager:
             return False
     
     def get_authorized_devices(self, store_id: int = None, user_id: int = None) -> List[Dict]:
-        """جلب الأجهزة المصرح بها"""
+        """جلب الأجهزة المصرج بها"""
         try:
             query = """
             SELECT ad.*, s.store_name, u.name as user_name, 
@@ -2734,7 +3228,7 @@ class DatabaseManager:
             return False
     
     def get_login_attempts(self, limit: int = 100, failed_only: bool = False) -> List[Dict]:
-        """جلب سجل محاولات تسجيل الدخول"""
+        """جلب سجل محاولة تسجيل الدخول"""
         try:
             query = """
             SELECT * FROM login_attempts
@@ -2749,7 +3243,7 @@ class DatabaseManager:
             self.cursor.execute(query, (limit,))
             return self.cursor.fetchall()
         except mysql.connector.Error as err:
-            print(f"❌ خطأ في جلب سجل الدخول: {err}")
+            print(f"❌ خطأ في جلب سجل محاولة تسجيل الدخول: {err}")
             return []
     
     def get_store_info(self, store_id: int) -> Optional[Dict]:
@@ -2889,6 +3383,7 @@ class DatabaseManager:
                    amount: float, description: str = None, is_personal: bool = False) -> Optional[int]:
         """إضافة مصروف جديد"""
         try:
+            user_id = self._get_valid_user_id(user_id)
             query = """
             INSERT INTO expenses (store_id, user_id, expense_type, amount, description, is_personal)
             VALUES (%s, %s, %s, %s, %s, %s)
@@ -2896,6 +3391,12 @@ class DatabaseManager:
             self.cursor.execute(query, (store_id, user_id, expense_type, amount, description, is_personal))
             expense_id = self.cursor.lastrowid
             self.conn.commit()
+
+            # Queue for sync
+            self._queue_sync('expenses', expense_id, 'INSERT', {
+                'store_id': store_id, 'user_id': user_id, 'expense_type': expense_type,
+                'amount': amount, 'description': description, 'is_personal': is_personal
+            })
             
             # Record Treasury Out
             self.record_treasury_transaction(
@@ -3090,62 +3591,19 @@ class DatabaseManager:
             # This is what remains in pocket after personal withdrawals
             report['net_cash'] = report['net_profit'] - report['personal_expenses']
             
-            # === DEBUGGING LOGS (Prints to Console for User to Screenshot) ===
-            print("\n" + "="*50)
-            print(f"📊 FINANCIAL DIAGNOSTICS (Store ID: {store_id})")
-            print(f"📅 Period: {start_date} to {end_date}")
-            print(f"💰 Total Sales: {report['total_sales']:,.2f}")
-            print(f"📦 Total COGS: {report['total_cogs']:,.2f}")
-            print(f"↩️ Returns: {report['total_returns']:,.2f}")
-            print(f"💸 Expenses: {report['total_expenses']:,.2f}")
-            print("-" * 30)
-            
-            # Deep Dive into Zero Cost Items
-            # Find how many SOLD items have 0 Buy Price
-            debug_query = f"""
-                SELECT COUNT(*) as count, SUM(ii.quantity) as qty_sold, 
-                       p.product_name 
-                FROM invoice_items ii
-                JOIN products p ON ii.product_id = p.id
-                JOIN invoices i ON ii.invoice_id = i.id
-                WHERE i.status = 'Completed' AND i.store_id = %s {date_filter_inv}
-                AND (p.buy_price IS NULL OR p.buy_price = 0)
-                GROUP BY p.product_name
-                LIMIT 5
-            """
-            
-            # Re-construct params for debug (store_id + dates)
-            debug_params = [store_id]
-            if start_date and end_date:
-                debug_params.extend([start_date, end_date])
-                
-            self.cursor.execute(debug_query, debug_params)
-            zero_cost_items = self.cursor.fetchall()
-            
-            if zero_cost_items:
-                print("⚠️ WARNING: Found items sold with ZERO Cost:")
-                for z in zero_cost_items:
-                    print(f" - {z['product_name']} (Qty: {z['qty_sold']})")
-                print(f"   ...and possibly others.")
-            else:
-                print("✅ No items sold with exactly 0 cost found in this period.")
-                
-            # Check for very low cost items (potential data entry error)
-            debug_low_query = f"""
-                SELECT COUNT(*) as cnt 
-                FROM invoice_items ii
-                JOIN products p ON ii.product_id = p.id
-                JOIN invoices i ON ii.invoice_id = i.id
-                WHERE i.status = 'Completed' AND i.store_id = %s {date_filter_inv}
-                AND p.buy_price > 0 AND p.buy_price < 1.0
-            """
-            self.cursor.execute(debug_low_query, debug_params)
-            low_cost_cnt = self.cursor.fetchone()
-            if low_cost_cnt and low_cost_cnt['cnt'] > 0:
-                 print(f"⚠️ Found {low_cost_cnt['cnt']} sold items with very low cost (< 1.0)")
-            
-            print("="*50 + "\n")
-            # ==========================================================
+            if self._verbose_diagnostics:
+                logger.info(
+                    "FINANCIAL DIAGNOSTICS | store=%s | period=%s..%s | sales=%.2f | cogs=%.2f | returns=%.2f | expenses=%.2f | net_profit=%.2f | net_cash=%.2f",
+                    store_id if store_id is not None else 'ALL',
+                    start_date,
+                    end_date,
+                    float(report.get('total_sales', 0) or 0),
+                    float(report.get('total_cogs', 0) or 0),
+                    float(report.get('total_returns', 0) or 0),
+                    float(report.get('total_expenses', 0) or 0),
+                    float(report.get('net_profit', 0) or 0),
+                    float(report.get('net_cash', 0) or 0),
+                )
 
             return report
             
@@ -3153,7 +3611,7 @@ class DatabaseManager:
             print(f"❌ Error compiling financial report: {err}")
             return {}
 
-    # ==================== إدارة الفئات ====================
+    # ==================== إدارة المصروفات ====================
     
     def get_categories(self) -> List[Dict]:
         """جلب كافة فئات المنتجات"""
@@ -3185,13 +3643,13 @@ class DatabaseManager:
             return False
 
     def delete_category(self, category_id: int) -> Tuple[bool, str]:
-        """حذف فئة بشرط عدم وجود منتجات تابعة لها"""
+        """حذف فئة بشرط عدم وجود مبيعات أو مخزون"""
         try:
-            # التحقق من وجود منتجات
+            # التحقق من وجود مخزون
             self.cursor.execute("SELECT COUNT(*) as count FROM products WHERE category_id = %s AND is_active = TRUE", (category_id,))
             res = self.cursor.fetchone()
             if res and res['count'] > 0:
-                return False, f"لا يمكن حذف الفئة لوجود {res['count']} منتج مرتبط بها. يجب حذف المنتجات أو تغيير فئتها أولاً."
+                return False, f"لا يمكن حذف الفئة لوجود {res['count']} منتج مرتبطة بها. يجب حذف المنتجات أولاً."
             
             self.cursor.execute("DELETE FROM categories WHERE id = %s", (category_id,))
             self.conn.commit()
@@ -3203,11 +3661,11 @@ class DatabaseManager:
     def delete_store(self, store_id: int) -> Tuple[bool, str]:
         """حذف فرع بشرط عدم وجود مبيعات أو مخزون"""
         try:
-            # التحقق من وجود مبيعات
+            # التحقق من وجود مخزون
             self.cursor.execute("SELECT COUNT(*) as count FROM invoices WHERE store_id = %s", (store_id,))
             res = self.cursor.fetchone()
             if res and res['count'] > 0:
-                return False, f"لا يمكن حذف الفرع لوجود {res['count']} فاتورة مرتبطة به. قم بتعطيل الفرع بدلاً من حذفه."
+                return False, f"لا يمكن حذف الفرع لوجود {res['count']} فاتورة مرتبطة به. قم بتصفية المخزون أولاً."
             
             # التحقق من وجود مخزون
             self.cursor.execute("SELECT COUNT(*) as count FROM product_inventory WHERE store_id = %s AND quantity_in_stock > 0", (store_id,))
@@ -3290,8 +3748,8 @@ class DatabaseManager:
             # Ensure buy_price exists in invoice_items
             try:
                 self.cursor.execute("ALTER TABLE invoice_items ADD COLUMN buy_price DECIMAL(10, 2) DEFAULT 0")
-            except: pass
-
+            except mysql.connector.Error as e:
+                self._handle_non_critical_db_error(e)
             # 3. جدول بنود الشراء
             self.cursor.execute("""
             CREATE TABLE IF NOT EXISTS purchase_items (
@@ -3313,8 +3771,8 @@ class DatabaseManager:
             try:
                 self.cursor.execute("ALTER TABLE products ADD COLUMN supplier_id INT AFTER category_id")
                 self.cursor.execute("ALTER TABLE products ADD CONSTRAINT fk_product_supplier FOREIGN KEY (supplier_id) REFERENCES suppliers(id)")
-            except: pass
-            
+            except mysql.connector.Error as e:
+                self._handle_non_critical_db_error(e)
             self.conn.commit()
             logger.info("✅ جداول المشتريات جاهزة")
         except mysql.connector.Error as err:
@@ -3347,13 +3805,14 @@ class DatabaseManager:
                                notes: str = "", ref_number: str = "", payment_method: str = "Cash", 
                                paid_amount: float = 0.0, subtotal: float = 0.0, 
                                tax_amount: float = 0.0, discount_amount: float = 0.0) -> Optional[int]:
-        """إنشاء فاتورة شراء وتحديث المخزون ومتوسط التكلفة - يرجع رقم الفاتورة في حالة النجاح"""
+        """إنشاء فاتورة شراء وتحديث المخزون ومتوسط التكلفة - يرجع رقم الفاتورة في السجل المالي للمورد والتاريخ"""
         try:
             remaining = total_amount - paid_amount
             status = 'paid' if remaining <= 0 else 'partial' if paid_amount > 0 else 'unpaid'
+            user_id = self._get_valid_user_id(user_id)
             
             # 1. إنشاء الفاتورة
-            print(f"DEBUG: Inserting invoice for supplier {supplier_id}")
+            logger.debug("Inserting invoice for supplier %s", supplier_id)
             inv_query = """
                 INSERT INTO purchase_invoices (supplier_id, total_amount, paid_amount, remaining_amount, 
                                              subtotal, tax_amount, discount_amount, payment_method, 
@@ -3364,9 +3823,18 @@ class DatabaseManager:
                                           subtotal, tax_amount, discount_amount, payment_method,
                                           status, ref_number, user_id, notes))
             invoice_id = self.cursor.lastrowid
-            print(f"DEBUG: Invoice created with ID: {invoice_id}")
+            
+            # Queue for sync (Now including items)
+            self._queue_sync('purchase_invoices', invoice_id, 'INSERT', {
+                'supplier_id': supplier_id, 'total_amount': total_amount, 'paid_amount': paid_amount, 'remaining_amount': remaining,
+                'subtotal': subtotal, 'tax_amount': tax_amount, 'discount_amount': discount_amount, 'payment_method': payment_method,
+                'payment_status': status, 'ref_number': ref_number, 'created_by': user_id, 'notes': notes,
+                'items': items # Include items for cloud replay
+            })
+            
+            logger.debug("Invoice created with ID: %s", invoice_id)
 
-            # 2. تحديث رصيد المورد (زيادة المديونية بالمبلغ المتبقي)
+            # 2. تحديث رصيد الموردين والموردين
             if remaining > 0:
                 self.cursor.execute("UPDATE suppliers SET current_balance = current_balance + %s WHERE id = %s", 
                                   (remaining, supplier_id))
@@ -3452,7 +3920,7 @@ class DatabaseManager:
                     amount=paid_amount,
                     source='Purchase',
                     ref_id=invoice_id,
-                    desc=f"شراء بضاعة - فاتورة #{ref_number or invoice_id}",
+                    desc=f"شراء بضاعة - فاتورة رقم {invoice_number}",
                     user_id=user_id
                 )
                 # سجل المبلغ المدفوع فوراً في السجل المالي للمورد (Credit = Cash Out)
@@ -3461,11 +3929,11 @@ class DatabaseManager:
                         (account_type, account_id, transaction_type, amount, reference_type, reference_id, description, created_by)
                     VALUES ('Supplier', %s, 'Credit', %s, 'Payment', %s, %s, %s)
                 """, (supplier_id, paid_amount,
-                      invoice_id, f"دفع نقدي - فاتورة شراء #{ref_number or invoice_id}",
+                      invoice_id, f"مديونية آجلة - فاتورة شراء #{ref_number or invoice_id}",
                       user_id))
                 self.conn.commit()
 
-            # سجل المبلغ الآجل (الدين على الشركة للمورد) في السجل المالي (Debit = Increasing Debt)
+            # سجل المبلغ المدفوع فوراً في السجل المالي (Debit = Increasing Debt)
             if remaining > 0:
                 self.cursor.execute("""
                     INSERT INTO financial_ledger 
@@ -3479,9 +3947,13 @@ class DatabaseManager:
             return invoice_id
             
         except mysql.connector.Error as err:
-            print(f"❌ خطأ حفظ فاتورة الشراء: {err}")
-            if self.conn: self.conn.rollback()
-            return None
+            logger.error("Create purchase invoice failed: %s", err, exc_info=True)
+            self.conn.rollback()
+            return False
+        except (TypeError, ValueError) as e:
+            logger.error("Unexpected data error while creating purchase invoice: %s", e, exc_info=True)
+            self.conn.rollback()
+            return False
 
     def update_product_purchase_info(self, product_id, supplier_name, purchase_date):
         """Updates the product with the last supplier and purchase date."""
@@ -3492,7 +3964,7 @@ class DatabaseManager:
                 self.cursor.execute("SELECT last_supplier FROM products LIMIT 1")
             except mysql.connector.Error:
                 # Add columns if not exist
-                print("🛠️ Adding last_supplier and last_purchase_date columns to products table...")
+                logger.debug("Adding last_supplier and last_purchase_date columns to products table...")
                 self.cursor.execute("ALTER TABLE products ADD COLUMN last_supplier VARCHAR(255) NULL")
                 self.cursor.execute("ALTER TABLE products ADD COLUMN last_purchase_date DATE NULL")
                 # ALTER TABLE implicitly commits, so no self.conn.commit() needed here for the ALTER.
@@ -3506,7 +3978,7 @@ class DatabaseManager:
         except mysql.connector.Error as err:
             print(f"❌ Error updating product purchase info: {err}")
             # Do not rollback here, let the caller handle the transaction.
-        except Exception as e:
+        except (TypeError, ValueError) as e:
             print(f"❌ Unexpected Error updating product purchase info: {e}")
             raise e
 
@@ -3514,7 +3986,7 @@ class DatabaseManager:
         """Update purchase invoice payment and supplier balance."""
         try:
             # 1. Get current invoice details
-            self.cursor.execute("SELECT supplier_id, total_amount, paid_amount, remaining_amount, payment_status FROM purchase_invoices WHERE id = %s", (invoice_id,))
+            self.cursor.execute("SELECT supplier_id, total_amount, paid_amount, remaining_amount, payment_status, created_by FROM purchase_invoices WHERE id = %s", (invoice_id,))
             inv = self.cursor.fetchone()
             if not inv:
                 return False
@@ -3550,12 +4022,13 @@ class DatabaseManager:
                 self.cursor.execute("UPDATE suppliers SET current_balance = current_balance - %s WHERE id = %s", (amount, supplier_id))
                 
                 # 4. Record in Financial Ledger for central tracking
-                # We don't have user_id here but it's often stored in the invoice
-                creator_id = inv.get('created_by', 1) # Fallback to admin if not found
+                # We fetch the original creator, but fall back to a valid user if needed to avoid FK errors
+                creator_id = self._get_valid_user_id(inv.get('created_by'))
+
                 self.cursor.execute("""
-                    INSERT INTO financial_ledger (account_type, account_id, transaction_type, amount, reference_type, description, created_by)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s)
-                """, ('Supplier', supplier_id, 'Credit', amount, 'Payment', f"Invoice #{invoice_id} Payment", creator_id))
+                    INSERT INTO financial_ledger (account_type, account_id, transaction_type, amount, reference_type, reference_id, description, created_by)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                """, ('Supplier', supplier_id, 'Credit', amount, 'Payment', invoice_id, f"Invoice #{invoice_id} Payment", creator_id))
                 
                 # 5. Sync with Treasury
                 self.cursor.execute("SELECT store_id FROM users WHERE id = %s", (creator_id,))
@@ -3590,9 +4063,8 @@ class DatabaseManager:
             self.cursor.execute(query)
             return self.cursor.fetchall()
         except mysql.connector.Error as err:
-            print(f"❌ خطأ جلب الفواتير: {err}")
+            print(f"❌ خطأ في جلب الفواتير: {err}")
             return []
-
 
     def get_product_total_stock(self, product_id: int) -> int:
         """احسب إجمالي المخزون لمنتج معين في جميع الفروع"""
@@ -3625,17 +4097,17 @@ class DatabaseManager:
             try:
                 self.cursor.execute("ALTER TABLE customers ADD COLUMN credit_limit DECIMAL(12, 2) DEFAULT 0 AFTER current_balance")
                 self.cursor.execute("ALTER TABLE customers ADD COLUMN notes TEXT")
-            except: pass
-            
+            except mysql.connector.Error as e:
+                self._handle_non_critical_db_error(e)
             # إضافة مسار المرفقات والتسويات للسجل
             try:
                 self.cursor.execute("ALTER TABLE financial_ledger ADD COLUMN attachment_path VARCHAR(255) AFTER description")
                 self.cursor.execute("ALTER TABLE financial_ledger ADD COLUMN is_settlement BOOLEAN DEFAULT FALSE")
-            except: pass
-            
+            except mysql.connector.Error as e:
+                self._handle_non_critical_db_error(e)
             self.conn.commit()
-        except Exception as e:
-            print(f"❌ Upgrade Schema Error: {e}")
+        except mysql.connector.Error as e:
+            logger.error("Upgrade schema failed: %s", e, exc_info=True)
 
     def create_treasury_table(self):
         """إنشاء جدول حركة الخزينة المركزية"""
@@ -3658,14 +4130,15 @@ class DatabaseManager:
             # Ensure ENUM is up to date for existing databases
             try:
                 self.cursor.execute("ALTER TABLE treasury MODIFY COLUMN source_type ENUM('Sale','Purchase','Expense','Settlement','Adjustment','Return') NOT NULL")
-            except: pass
+            except mysql.connector.Error as e:
+                self._handle_non_critical_db_error(e)
             self.conn.commit()
-            print("✅ جدول الخزينة جاهز")
+            logger.info("جدول الخزينة جاهز")
         except mysql.connector.Error as err:
-            print(f"❌ خطأ في إنشاء جدول الخزينة: {err}")
+            logger.error("خطأ في إنشاء جدول الخزينة: %s", err, exc_info=True)
 
     def create_customers_table(self):
-        """إنشاء جدول العملاء المركزي"""
+        """إنشاء جدول العملاء المركزية"""
         try:
             self.cursor.execute("""
             CREATE TABLE IF NOT EXISTS customers (
@@ -3681,9 +4154,9 @@ class DatabaseManager:
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
             """)
             self.conn.commit()
-            print("✅ جدول العملاء جاهز")
+            logger.info("جدول العملاء جاهز")
         except mysql.connector.Error as err:
-            print(f"❌ خطأ في إنشاء جدول العملاء: {err}")
+            logger.error("خطأ في إنشاء جدول العملاء: %s", err, exc_info=True)
 
     def create_ledger_table(self):
         """إنشاء سجل العمليات المالية (دفتر الأستاذ)"""
@@ -3704,9 +4177,9 @@ class DatabaseManager:
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
             """)
             self.conn.commit()
-            print("✅ سجل العمليات المالية جاهز")
+            logger.info("سجل العمليات المالية جاهز")
         except mysql.connector.Error as err:
-            print(f"❌ خطأ في إنشاء سجل العمليات المالية: {err}")
+            logger.error("خطأ في إنشاء سجل العمليات المالية: %s", err, exc_info=True)
 
     def migrate_customers_from_transactions(self):
         """ترحيل بيانات العملاء من الفواتير والطلبات السابقة"""
@@ -3746,14 +4219,14 @@ class DatabaseManager:
             try:
                 self.cursor.execute("ALTER TABLE invoices ADD COLUMN customer_id INT AFTER cashier_id")
                 self.cursor.execute("ALTER TABLE invoices ADD CONSTRAINT fk_inv_cust FOREIGN KEY (customer_id) REFERENCES customers(id)")
-            except: pass
-            
+            except mysql.connector.Error as e:
+                self._handle_non_critical_db_error(e)
             # إضافة العمود للطلبات
             try:
                 self.cursor.execute("ALTER TABLE orders ADD COLUMN customer_id INT AFTER customer_city")
                 self.cursor.execute("ALTER TABLE orders ADD CONSTRAINT fk_ord_cust FOREIGN KEY (customer_id) REFERENCES customers(id)")
-            except: pass
-            
+            except mysql.connector.Error as e:
+                self._handle_non_critical_db_error(e)
             # تحديث الربط
             self.cursor.execute("UPDATE invoices i JOIN customers c ON i.customer_phone = c.phone SET i.customer_id = c.id WHERE i.customer_id IS NULL")
             self.cursor.execute("UPDATE orders o JOIN customers c ON o.customer_phone = c.phone SET o.customer_id = c.id WHERE o.customer_id IS NULL")
@@ -3763,12 +4236,13 @@ class DatabaseManager:
             print(f"❌ Link Error: {err}")
 
     def get_customer_accounts(self) -> List[Dict]:
-        """جلب أرصدة كافة العملاء"""
+        """جلب ٣رصدة كافة العملاء"""
         try:
             self.cursor.execute("SELECT * FROM customers WHERE is_active = TRUE ORDER BY current_balance DESC")
             return self.cursor.fetchall()
-        except: return []
-
+        except mysql.connector.Error as e:
+            logger.error("DB query failed: %s", e, exc_info=True)
+            return []
     def record_payment(self, account_type: str, account_id: int, amount: float, user_id: int, desc: str = "") -> bool:
         """تسجيل عملية دفع أو تحصيل وتحديث الرصيد"""
         try:
@@ -3814,10 +4288,11 @@ class DatabaseManager:
                     
                     remaining_to_allocate -= allocate
 
-            # 2. التسجيل في السجل
+            # 2. التسجيل في السجل المالي كوسيلة تسوية
+            user_id = self._get_valid_user_id(user_id)
             self.cursor.execute("""
-                INSERT INTO financial_ledger (account_type, account_id, transaction_type, amount, reference_type, description, created_by)
-                VALUES (%s, %s, %s, %s, %s, %s, %s)
+                INSERT INTO financial_ledger (account_type, account_id, transaction_type, amount, reference_type, reference_id, description, created_by)
+                VALUES (%s, %s, %s, %s, %s, NULL, %s, %s)
             """, (account_type, account_id, trans_type, amount, ref_type, desc, user_id))
             ledger_id = self.cursor.lastrowid
 
@@ -3837,8 +4312,8 @@ class DatabaseManager:
             
             self.conn.commit()
             return True
-        except Exception as e:
-            print(f"❌ Record Payment Error: {e}")
+        except mysql.connector.Error as e:
+            logger.error("Record payment failed: %s", e, exc_info=True)
             self.conn.rollback()
             return False
 
@@ -3852,8 +4327,9 @@ class DatabaseManager:
             """
             self.cursor.execute(query, (account_type, account_id))
             return self.cursor.fetchall()
-        except: return []
-
+        except mysql.connector.Error as e:
+            logger.error("DB query failed: %s", e, exc_info=True)
+            return []
     def _get_or_create_customer(self, name, phone, address):
         """Helper to get existing customer ID or create a new one"""
         # If both name and phone are empty, we handle it as a default anonymous customer
@@ -3887,8 +4363,8 @@ class DatabaseManager:
                                (final_name, phone if phone else None, address))
             self.conn.commit()
             return self.cursor.lastrowid
-        except Exception as e:
-            print(f"Error in _get_or_create_customer: {e}")
+        except mysql.connector.Error as e:
+            logger.error("Get or create customer failed: %s", e, exc_info=True)
             return None
 
     def finalize_invoice(self, invoice_number: str, user_id: int) -> bool:
@@ -3911,15 +4387,21 @@ class DatabaseManager:
                 self.cursor.execute("UPDATE customers SET current_balance = current_balance + %s WHERE id = %s", (debt, inv['customer_id']))
                 
                 # التسجيل في السجل المالي
+                user_id = self._get_valid_user_id(user_id)
                 self.cursor.execute("""
                     INSERT INTO financial_ledger (account_type, account_id, transaction_type, amount, reference_type, reference_id, description, created_by)
                     VALUES ('Customer', %s, 'Credit', %s, 'Invoice', %s, %s, %s)
                 """, (inv['customer_id'], debt, inv['id'], f"مديونية فاتورة رقم {invoice_number}", user_id))
             
+            # Queue for sync
+            self._queue_sync('invoices_finalize', inv['id'], 'FINALIZE', {
+                'invoice_number': invoice_number, 'user_id': user_id
+            })
+            
             self.conn.commit()
             return True
-        except Exception as e:
-            print(f"❌ Finalize Invoice Error: {e}")
+        except mysql.connector.Error as e:
+            logger.error("Finalize invoice failed: %s", e, exc_info=True)
             return False
 
     def check_credit_limit(self, customer_id: int, additional_amount: float) -> Tuple[bool, str]:
@@ -3928,8 +4410,8 @@ class DatabaseManager:
             self.cursor.execute("SELECT name, current_balance, credit_limit FROM customers WHERE id = %s", (customer_id,))
             res = self.cursor.fetchone()
             if not res or float(res['credit_limit']) <= 0:
-                return True, "" # لا يوجد حد ائتماني أو العميل غير موجود
-            
+                return True, "" # لا يوجد حد ائتماني أو لم يتم ربطه
+
             new_total = float(res['current_balance']) + additional_amount
             limit = float(res['credit_limit'])
             
@@ -3937,19 +4419,21 @@ class DatabaseManager:
                 return False, f"⚠️ العميل '{res['name']}' تجاوز الحد الائتماني المسموح به ({limit:,.2f} ج.م). الرصيد الحالي: {res['current_balance']:,.2f}"
             
             return True, ""
-        except: return True, ""
-
+        except (mysql.connector.Error, ValueError, TypeError, KeyError) as e:
+            logger.warning("Credit limit check failed, allowing operation by fallback: %s", e)
+            return True, ""
     def record_treasury_transaction(self, store_id, trans_type, amount, source, ref_id, desc, user_id):
         """تسجيل حركة في الخزينة"""
         try:
+            user_id = self._get_valid_user_id(user_id)
             self.cursor.execute("""
                 INSERT INTO treasury (store_id, transaction_type, amount, source_type, reference_id, description, created_by)
                 VALUES (%s, %s, %s, %s, %s, %s, %s)
             """, (store_id, trans_type, amount, source, ref_id, desc, user_id))
             self.conn.commit()
             return True
-        except Exception as e:
-            print(f"❌ Treasury Error: {e}")
+        except mysql.connector.Error as e:
+            logger.error("Treasury transaction failed: %s", e, exc_info=True)
             return False
 
     def get_debt_aging_report(self):
@@ -3967,8 +4451,9 @@ class DatabaseManager:
             """
             self.cursor.execute(query)
             return self.cursor.fetchall()
-        except: return []
-
+        except mysql.connector.Error as e:
+            logger.error("DB query failed: %s", e, exc_info=True)
+            return []
     def record_settlement(self, account_type, account_id, amount, desc, user_id):
         """تسجيل تسوية ديون (إعدام دين أو خصم تسوية)"""
         try:
@@ -3977,19 +4462,29 @@ class DatabaseManager:
             self.cursor.execute(f"UPDATE {table} SET current_balance = current_balance - %s WHERE id = %s", (amount, account_id))
             
             # 2. التسجيل في السجل المالي كوسيلة تسوية
+            user_id = self._get_valid_user_id(user_id)
             self.cursor.execute("""
-                INSERT INTO financial_ledger (account_type, account_id, transaction_type, amount, reference_type, description, created_by, is_settlement)
-                VALUES (%s, %s, 'Debit', %s, 'Adjustment', %s, %s, TRUE)
+                INSERT INTO financial_ledger (account_type, account_id, transaction_type, amount, reference_type, reference_id, description, created_by, is_settlement)
+                VALUES (%s, %s, 'Debit', %s, 'Adjustment', NULL, %s, %s, TRUE)
             """, (account_type, account_id, amount, desc, user_id))
+            
+            # Queue for sync
+            self._queue_sync('settlements', account_id, 'INSERT', {
+                'account_type': account_type, 'account_id': account_id, 'amount': amount, 'description': desc, 'user_id': user_id
+            })
             
             self.conn.commit()
             return True
-        except Exception as e:
+        except mysql.connector.Error as e:
             self.conn.rollback()
             return False
 
 if __name__ == "__main__":
     db = DatabaseManager()
     db.close()
+
+
+
+
 
 

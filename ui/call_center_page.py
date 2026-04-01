@@ -25,11 +25,13 @@ from ui.styles import (
 class CallCenterPage(QWidget):
     """صفحة Call Center - إدارة أوامر العملاء"""
 
-    def __init__(self, user_info=None, parent=None):
+    def __init__(self, user_info=None, parent=None, auto_load=True):
         super().__init__(parent)
         self.setStyleSheet(GLOBAL_STYLE)
         self.db = DatabaseManager()
         self.user_info = user_info or {}
+        self.auto_load = auto_load
+        self._is_loaded = False
         
         # مؤقت البحث (Debounce)
         self.search_timer = QTimer()
@@ -40,8 +42,15 @@ class CallCenterPage(QWidget):
 
     def set_user(self, user_info):
         self.user_info = user_info or {}
-        self.load_stores()
-        self.load_orders()
+        if self.auto_load or self._is_loaded:
+            self.ensure_loaded(force=True)
+
+    def ensure_loaded(self, force=False):
+        """Load stores/orders when tab is opened."""
+        if force or not self._is_loaded:
+            self.load_stores()
+            self.load_orders()
+            self._is_loaded = True
 
     def init_ui(self):
         layout = QVBoxLayout()

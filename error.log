@@ -351,3 +351,351 @@ Traceback (most recent call last):
     def eventFilter(self, source, event):
     
 KeyboardInterrupt
+
+
+--- Error at 2026-03-02 03:53:48.061585 ---
+Traceback (most recent call last):
+  File "C:\Users\Master\AppData\Local\Programs\Python\Python312\Lib\enum.py", line 720, in __call__
+    def __call__(cls, value, names=_not_given, *values, module=None, qualname=None, type=None, start=1, boundary=None):
+    
+KeyboardInterrupt
+
+
+--- Error at 2026-03-02 04:45:43.439350 ---
+Traceback (most recent call last):
+  File "C:\Users\Master\AppData\Local\Programs\Python\Python312\Lib\enum.py", line 720, in __call__
+    def __call__(cls, value, names=_not_given, *values, module=None, qualname=None, type=None, start=1, boundary=None):
+    
+KeyboardInterrupt
+
+
+--- Error at 2026-03-04 15:02:53.718402 ---
+Traceback (most recent call last):
+  File "d:\Python Desktop\ui\products_page.py", line 1526, in delete_product
+    cursor.execute(f"SELECT COUNT(*) as count FROM {table} WHERE product_id = %s", (product_id,))
+  File "D:\Python Desktop\.venv\Lib\site-packages\mysql\connector\cursor.py", line 416, in execute
+    self._connection.cmd_query(
+  File "D:\Python Desktop\.venv\Lib\site-packages\mysql\connector\opentelemetry\context_propagation.py", line 97, in wrapper
+    return method(cnx, *args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\Python Desktop\.venv\Lib\site-packages\mysql\connector\_decorating.py", line 89, in handle_cnx_method
+    raise err
+  File "D:\Python Desktop\.venv\Lib\site-packages\mysql\connector\_decorating.py", line 85, in handle_cnx_method
+    return cnx_method(cnx, *args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\Python Desktop\.venv\Lib\site-packages\mysql\connector\connection.py", line 985, in cmd_query
+    self._send_cmd(
+  File "D:\Python Desktop\.venv\Lib\site-packages\mysql\connector\_decorating.py", line 89, in handle_cnx_method
+    raise err
+  File "D:\Python Desktop\.venv\Lib\site-packages\mysql\connector\_decorating.py", line 85, in handle_cnx_method
+    return cnx_method(cnx, *args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\Python Desktop\.venv\Lib\site-packages\mysql\connector\connection.py", line 514, in _send_cmd
+    self._socket.recv(read_timeout or self._read_timeout)
+  File "D:\Python Desktop\.venv\Lib\site-packages\mysql\connector\network.py", line 668, in recv
+    return self._netbroker.recv(self.sock, self.address)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\Python Desktop\.venv\Lib\site-packages\mysql\connector\network.py", line 235, in recv
+    header = self._recv_chunk(sock, size=PACKET_HEADER_LENGTH)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\Python Desktop\.venv\Lib\site-packages\mysql\connector\network.py", line 182, in _recv_chunk
+    raise InterfaceError(errno=2013)
+mysql.connector.errors.InterfaceError: 2013: Lost connection to MySQL server during query
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "D:\Python Desktop\.venv\Lib\site-packages\mysql\connector\network.py", line 165, in _send_pkt
+    sock.sendall(pkt)
+  File "C:\Users\Master\AppData\Local\Programs\Python\Python312\Lib\ssl.py", line 1210, in sendall
+    v = self.send(byte_view[count:])
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Master\AppData\Local\Programs\Python\Python312\Lib\ssl.py", line 1179, in send
+    return self._sslobj.write(data)
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+ssl.SSLEOFError: EOF occurred in violation of protocol (_ssl.c:2427)
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "d:\Python Desktop\ui\products_page.py", line 1110, in <lambda>
+    delete_btn.clicked.connect(lambda checked, p_id=product['id'], p_name=product['product_name']: self.delete_product(p_id, p_name))
+                                                                                                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "d:\Python Desktop\ui\products_page.py", line 1611, in delete_product
+    self.db.conn.rollback()
+  File "D:\Python Desktop\.venv\Lib\site-packages\mysql\connector\connection.py", line 1463, in rollback
+    self._execute_query("ROLLBACK")
+  File "D:\Python Desktop\.venv\Lib\site-packages\mysql\connector\connection.py", line 1475, in _execute_query
+    self.cmd_query(query)
+  File "D:\Python Desktop\.venv\Lib\site-packages\mysql\connector\opentelemetry\context_propagation.py", line 97, in wrapper
+    return method(cnx, *args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\Python Desktop\.venv\Lib\site-packages\mysql\connector\_decorating.py", line 89, in handle_cnx_method
+    raise err
+  File "D:\Python Desktop\.venv\Lib\site-packages\mysql\connector\_decorating.py", line 85, in handle_cnx_method
+    return cnx_method(cnx, *args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\Python Desktop\.venv\Lib\site-packages\mysql\connector\connection.py", line 985, in cmd_query
+    self._send_cmd(
+  File "D:\Python Desktop\.venv\Lib\site-packages\mysql\connector\_decorating.py", line 89, in handle_cnx_method
+    raise err
+  File "D:\Python Desktop\.venv\Lib\site-packages\mysql\connector\_decorating.py", line 85, in handle_cnx_method
+    return cnx_method(cnx, *args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\Python Desktop\.venv\Lib\site-packages\mysql\connector\connection.py", line 507, in _send_cmd
+    self._socket.send(
+  File "D:\Python Desktop\.venv\Lib\site-packages\mysql\connector\network.py", line 650, in send
+    self._netbroker.send(
+  File "D:\Python Desktop\.venv\Lib\site-packages\mysql\connector\network.py", line 223, in send
+    self._send_pkt(
+  File "D:\Python Desktop\.venv\Lib\site-packages\mysql\connector\network.py", line 169, in _send_pkt
+    raise OperationalError(
+mysql.connector.errors.OperationalError: 2055: Lost connection to MySQL server at 'gateway01.eu-central-1.prod.aws.tidbcloud.com:4000', system error: Errno 8: EOF occurred in violation of protocol (_ssl.c:2427)
+
+
+--- Error at 2026-03-04 15:29:35.861203 ---
+Traceback (most recent call last):
+  File "d:\Python Desktop\main.py", line 243, in <module>
+    main()
+  File "d:\Python Desktop\main.py", line 211, in main
+    window = POSApplication()
+             ^^^^^^^^^^^^^^^^
+  File "d:\Python Desktop\main.py", line 44, in __init__
+    self.login_page = LoginPage(self.db, self)
+                      ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "d:\Python Desktop\ui\login_page.py", line 24, in __init__
+    self.init_ui()
+  File "d:\Python Desktop\ui\login_page.py", line 283, in init_ui
+    self._update_attempts_hint()
+  File "d:\Python Desktop\ui\login_page.py", line 311, in _update_attempts_hint
+    remaining = max(0, self.max_attempts - self.failed_attempts)
+                       ^^^^^^^^^^^^^^^^^
+AttributeError: 'LoginPage' object has no attribute 'max_attempts'
+
+
+--- Error at 2026-03-18 02:12:58.276337 ---
+Traceback (most recent call last):
+  File "d:\Python Desktop\main.py", line 249, in <module>
+    main()
+    ~~~~^^
+  File "d:\Python Desktop\main.py", line 217, in main
+    window = POSApplication()
+  File "d:\Python Desktop\main.py", line 26, in __init__
+    self.db = DatabaseManager()
+              ~~~~~~~~~~~~~~~^^
+  File "d:\Python Desktop\database_manager.py", line 73, in __init__
+    self.create_sync_queue_table()
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AttributeError: 'DatabaseManager' object has no attribute 'create_sync_queue_table'
+
+
+--- Error at 2026-03-18 02:19:34.612015 ---
+Traceback (most recent call last):
+  File "d:\Python Desktop\main.py", line 249, in <module>
+    main()
+    ~~~~^^
+  File "d:\Python Desktop\main.py", line 217, in main
+    window = POSApplication()
+  File "d:\Python Desktop\main.py", line 26, in __init__
+    self.db = DatabaseManager()
+              ~~~~~~~~~~~~~~~^^
+  File "d:\Python Desktop\database_manager.py", line 74, in __init__
+    self.apply_performance_indexes()
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AttributeError: 'DatabaseManager' object has no attribute 'apply_performance_indexes'
+
+
+--- Error at 2026-03-18 02:23:18.695803 ---
+Traceback (most recent call last):
+  File "d:\Python Desktop\ui\login_page.py", line 431, in login
+    self.parent.show_dashboard(user)
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "d:\Python Desktop\main.py", line 125, in show_dashboard
+    self.dashboard_page = DashboardPage(self)
+                          ~~~~~~~~~~~~~^^^^^^
+  File "d:\Python Desktop\ui\dashboard_page.py", line 26, in __init__
+    self.init_ui()
+    ~~~~~~~~~~~~^^
+  File "d:\Python Desktop\ui\dashboard_page.py", line 85, in init_ui
+    self.admin_panel = AdminPanel(auto_load=False)
+                       ^^^^^^^^^^
+NameError: name 'AdminPanel' is not defined
+
+
+--- Error at 2026-03-18 02:28:36.537136 ---
+Traceback (most recent call last):
+  File "d:\Python Desktop\ui\login_page.py", line 431, in login
+    self.parent.show_dashboard(user)
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "d:\Python Desktop\main.py", line 125, in show_dashboard
+    self.dashboard_page = DashboardPage(self)
+                          ~~~~~~~~~~~~~^^^^^^
+  File "d:\Python Desktop\ui\dashboard_page.py", line 27, in __init__
+    self.init_ui()
+    ~~~~~~~~~~~~^^
+  File "d:\Python Desktop\ui\dashboard_page.py", line 87, in init_ui
+    self.cashier_page = CashierPage()
+                        ^^^^^^^^^^^
+NameError: name 'CashierPage' is not defined
+
+
+--- Error at 2026-03-18 02:40:03.496607 ---
+Traceback (most recent call last):
+  File "C:\Program Files\WindowsApps\PythonSoftwareFoundation.Python.3.13_3.13.3312.0_x64__qbz5n2kfra8p0\Lib\enum.py", line 696, in __call__
+    def __call__(cls, value, names=_not_given, *values, module=None, qualname=None, type=None, start=1, boundary=None):
+    
+KeyboardInterrupt
+
+
+--- Error at 2026-03-18 02:55:47.623702 ---
+Traceback (most recent call last):
+  File "d:\Python Desktop\ui\purchases_page.py", line 973, in save_invoice
+    invoice_id = self.db.create_purchase_invoice(
+        supplier_id=supplier_id,
+    ...<9 lines>...
+        discount_amount=self.discount_input.value()
+    )
+  File "d:\Python Desktop\database_manager.py", line 3649, in create_purchase_invoice
+    actual_invoice_date = invoice_date_res['invoice_date'].date() if invoice_date_res and invoice_date_res['invoice_date'] else None
+                                                                     ^^^^^^^^^^^^^^^^
+NameError: name 'invoice_date_res' is not defined
+
+
+--- Error at 2026-03-18 03:01:20.819571 ---
+Traceback (most recent call last):
+  File "d:\Python Desktop\ui\dashboard_page.py", line 437, in eventFilter
+    def eventFilter(self, source, event):
+    
+KeyboardInterrupt
+
+
+--- Error at 2026-03-18 03:01:31.086249 ---
+Traceback (most recent call last):
+  File "d:\Python Desktop\ui\purchases_page.py", line 973, in save_invoice
+    
+    
+    ...<11 lines>...
+        discount_amount=self.discount_input.value()
+        ^^^^^^^^^
+  File "d:\Python Desktop\database_manager.py", line 3649, in create_purchase_invoice
+    actual_invoice_date = invoice_date_res['invoice_date'].date() if invoice_date_res and invoice_date_res['invoice_date'] else None
+                                                                     ^^^^^^^^^^^^^^^^
+NameError: name 'invoice_date_res' is not defined
+
+
+--- Error at 2026-03-18 03:03:53.006740 ---
+Traceback (most recent call last):
+  File "d:\Python Desktop\main.py", line 249, in <module>
+    main()
+    ~~~~^^
+  File "d:\Python Desktop\main.py", line 217, in main
+    window = POSApplication()
+  File "d:\Python Desktop\main.py", line 26, in __init__
+    self.db = DatabaseManager()
+              ~~~~~~~~~~~~~~~^^
+  File "d:\Python Desktop\database_manager.py", line 73, in __init__
+    self.create_sync_queue_table()
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AttributeError: 'DatabaseManager' object has no attribute 'create_sync_queue_table'
+
+
+--- Error at 2026-03-18 03:04:50.553000 ---
+Traceback (most recent call last):
+  File "d:\Python Desktop\main.py", line 249, in <module>
+    main()
+    ~~~~^^
+  File "d:\Python Desktop\main.py", line 217, in main
+    window = POSApplication()
+  File "d:\Python Desktop\main.py", line 26, in __init__
+    self.db = DatabaseManager()
+              ~~~~~~~~~~~~~~~^^
+  File "d:\Python Desktop\database_manager.py", line 73, in __init__
+    self.create_sync_queue_table()
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AttributeError: 'DatabaseManager' object has no attribute 'create_sync_queue_table'
+
+
+--- Error at 2026-03-20 01:38:24.733172 ---
+Traceback (most recent call last):
+  File "d:\Python Desktop\main.py", line 249, in <module>
+    main()
+    ~~~~^^
+  File "d:\Python Desktop\main.py", line 217, in main
+    window = POSApplication()
+  File "d:\Python Desktop\main.py", line 26, in __init__
+    self.db = DatabaseManager()
+              ~~~~~~~~~~~~~~~^^
+  File "d:\Python Desktop\database_manager.py", line 73, in __init__
+    self.create_sync_queue_table()
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AttributeError: 'DatabaseManager' object has no attribute 'create_sync_queue_table'
+
+
+--- Error at 2026-03-20 01:41:39.965534 ---
+Traceback (most recent call last):
+  File "d:\Python Desktop\main.py", line 249, in <module>
+    main()
+    ~~~~^^
+  File "d:\Python Desktop\main.py", line 217, in main
+    window = POSApplication()
+  File "d:\Python Desktop\main.py", line 26, in __init__
+    self.db = DatabaseManager()
+              ~~~~~~~~~~~~~~~^^
+  File "d:\Python Desktop\database_manager.py", line 73, in __init__
+    self.create_sync_queue_table()
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AttributeError: 'DatabaseManager' object has no attribute 'create_sync_queue_table'
+
+
+--- Error at 2026-03-20 01:42:07.956118 ---
+Traceback (most recent call last):
+  File "d:\Python Desktop\main.py", line 249, in <module>
+    main()
+    ~~~~^^
+  File "d:\Python Desktop\main.py", line 217, in main
+    window = POSApplication()
+  File "d:\Python Desktop\main.py", line 26, in __init__
+    self.db = DatabaseManager()
+              ~~~~~~~~~~~~~~~^^
+  File "d:\Python Desktop\database_manager.py", line 73, in __init__
+    self.create_sync_queue_table()
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AttributeError: 'DatabaseManager' object has no attribute 'create_sync_queue_table'
+
+
+--- Error at 2026-03-20 02:26:23.490824 ---
+Traceback (most recent call last):
+  File "d:\Python Desktop\ui\purchases_page.py", line 974, in save_invoice
+    invoice_id = self.db.create_purchase_invoice(
+    
+    ...<11 lines>...
+    
+    )
+  File "d:\Python Desktop\database_manager.py", line 3807, in create_purchase_invoice
+    actual_invoice_date = invoice_date_res['invoice_date'].date() if invoice_date_res and invoice_date_res['invoice_date'] else None
+                                                                     ^^^^^^^^^^^^^^^^
+NameError: name 'invoice_date_res' is not defined
+
+
+--- Error at 2026-03-20 02:53:16.422408 ---
+Traceback (most recent call last):
+  File "d:\Python Desktop\main.py", line 110, in check_sync_recovery
+    logger.info("Found pending sync items on startup. Starting recovery...")
+    ^^^^^^
+NameError: name 'logger' is not defined
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "d:\Python Desktop\main.py", line 288, in <module>
+    main()
+    ~~~~^^
+  File "d:\Python Desktop\main.py", line 256, in main
+    window = POSApplication()
+  File "d:\Python Desktop\main.py", line 62, in __init__
+    self.check_sync_recovery()
+    ~~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "d:\Python Desktop\main.py", line 118, in check_sync_recovery
+    logger.error(f"Startup sync recovery failed: {e}")
+    ^^^^^^
+NameError: name 'logger' is not defined

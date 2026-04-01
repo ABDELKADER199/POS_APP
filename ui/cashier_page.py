@@ -475,7 +475,7 @@ class CashierPage(QWidget):
         total_str = self.total_label.text().split()[0]
         try:
             total = float(total_str)
-        except:
+        except (TypeError, ValueError):
             total = 0.0
             
         if "Mixed" in method:
@@ -611,7 +611,7 @@ class CashierPage(QWidget):
             else:
                 self.change_label.setText(f"المتبقي على العميل: {abs(change):.2f} ج.م")
                 self.change_label.setStyleSheet("color: #EF4444; padding: 5px; background-color: #1E293B; border-radius: 8px;")
-        except:
+        except (TypeError, ValueError, AttributeError):
             pass
     
     def hold_invoice(self):

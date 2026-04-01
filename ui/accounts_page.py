@@ -24,15 +24,17 @@ from ui.styles import (
 class AccountsPage(QWidget):
     """صفحة الحسابات المركزية"""
     
-    def __init__(self, user_info=None, parent=None):
+    def __init__(self, user_info=None, parent=None, auto_load=True):
         super().__init__(parent)
         self.setStyleSheet(GLOBAL_STYLE)
         self.db = DatabaseManager()
         self.user_info = user_info or {}
+        self.auto_load = auto_load
+        self._is_loaded = False
         
         # New sub-pages
-        self.purchases_page = PurchasesPage(self.db, self.user_info)
-        self.expenses_page = ExpensesPage(self.db, self.user_info)
+        self.purchases_page = PurchasesPage(self.db, self.user_info, auto_load=auto_load)
+        self.expenses_page = ExpensesPage(self.db, self.user_info, auto_load=auto_load)
         
         self.init_ui()
 
@@ -40,13 +42,27 @@ class AccountsPage(QWidget):
         """تعيين بيانات المستخدم"""
         self.user_info = user_info or {}
         
-        # Propagate user info to sub-pages
-        if hasattr(self, 'purchases_page') and hasattr(self.purchases_page, 'set_user'):
-            self.purchases_page.set_user(self.user_info)
-        if hasattr(self, 'expenses_page') and hasattr(self.expenses_page, 'set_user'):
-            self.expenses_page.set_user(self.user_info)
-            
-        self.refresh_data()
+        if self.auto_load or self._is_loaded:
+            if hasattr(self, 'purchases_page') and hasattr(self.purchases_page, 'set_user'):
+                self.purchases_page.set_user(self.user_info)
+            if hasattr(self, 'expenses_page') and hasattr(self.expenses_page, 'set_user'):
+                self.expenses_page.set_user(self.user_info)
+            self.refresh_data()
+        else:
+            # Keep sub-pages in sync without triggering DB-heavy refresh.
+            if hasattr(self, 'purchases_page'):
+                self.purchases_page.user = self.user_info
+            if hasattr(self, 'expenses_page'):
+                self.expenses_page.user = self.user_info
+
+    def ensure_loaded(self, force=False):
+        """تحميل بيانات الحسابات عند فتح التبويب."""
+        if force or not self._is_loaded:
+            if hasattr(self, 'purchases_page') and hasattr(self.purchases_page, 'set_user'):
+                self.purchases_page.set_user(self.user_info)
+            if hasattr(self, 'expenses_page') and hasattr(self.expenses_page, 'set_user'):
+                self.expenses_page.set_user(self.user_info)
+            self.refresh_data()
 
     def init_ui(self):
         layout = QVBoxLayout(self)
@@ -78,7 +94,8 @@ class AccountsPage(QWidget):
         self.tabs.addTab(self.create_analytics_tab(), "📊 تحليل الديون")
         
         layout.addWidget(self.tabs)
-        self.refresh_data()
+        if self.auto_load:
+            self.refresh_data()
 
     def create_treasury_tab(self):
         widget = QWidget()
@@ -252,6 +269,7 @@ class AccountsPage(QWidget):
         return widget
 
     def refresh_data(self):
+        self._is_loaded = True
         self.load_customers()
         self.load_suppliers()
         self.load_ledger()
@@ -259,9 +277,14 @@ class AccountsPage(QWidget):
         self.load_aging()
         
         # Refresh integrated pages
-        if hasattr(self.purchases_page, 'load_suppliers'):
+        if hasattr(self.purchases_page, 'ensure_loaded'):
+            self.purchases_page.ensure_loaded(force=False)
+        elif hasattr(self.purchases_page, 'load_suppliers'):
             self.purchases_page.load_suppliers()
-        if hasattr(self.expenses_page, 'refresh_ui'):
+
+        if hasattr(self.expenses_page, 'ensure_loaded'):
+            self.expenses_page.ensure_loaded(force=False)
+        elif hasattr(self.expenses_page, 'refresh_ui'):
             self.expenses_page.refresh_ui()
 
     def load_treasury(self):

@@ -8,6 +8,7 @@ from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLi
                              QComboBox, QDialog, QFormLayout, QSpinBox, QTabWidget, QHeaderView, QScrollArea, QAbstractItemView)
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QFont, QColor
+import mysql.connector
 from database_manager import DatabaseManager
 from ui.styles import GLOBAL_STYLE, BUTTON_STYLES, get_button_style, COLORS, TABLE_STYLE, GROUP_BOX_STYLE, INPUT_STYLE, LABEL_STYLE_HEADER, LABEL_STYLE_TITLE, TAB_STYLE
 import bcrypt
@@ -15,14 +16,16 @@ import bcrypt
 class AdminPanel(QWidget):
     """صفحة الإدارة - تشمل المستخدمين ومراقبة الأدراج"""
     
-    def __init__(self, user_info=None, parent=None):
+    def __init__(self, user_info=None, parent=None, auto_load=True):
         super().__init__(parent)
         self.setStyleSheet(GLOBAL_STYLE)
         self.db = DatabaseManager()
         self.user_info = user_info or {}
+        self.auto_load = auto_load
+        self._is_loaded = False
         self.init_ui()
-        self.load_users()
-        self.load_drawers()
+        if self.auto_load:
+            self.ensure_loaded(force=True)
     
     def set_user(self, user_info):
         """تعيين بيانات المستخدم وتحديث التبويبات"""
@@ -49,7 +52,15 @@ class AdminPanel(QWidget):
                 # إزالة التبويب إذا كان موجوداً والمستخدم ليس مطوراً
                 self.tabs.removeTab(devices_tab_index)
 
-        self.load_users()
+        if self.auto_load or self._is_loaded:
+            self.ensure_loaded(force=True)
+
+    def ensure_loaded(self, force=False):
+        """Load users/drawers only when the tab is opened."""
+        if force or not self._is_loaded:
+            self.load_users()
+            self.load_drawers()
+            self._is_loaded = True
     
     def init_ui(self):
         """إنشاء واجهة الصفحة"""
@@ -410,7 +421,8 @@ class AddUserDialog(QDialog):
             cursor.execute("SELECT id, store_name FROM stores WHERE is_active = TRUE")
             for store in cursor.fetchall(): 
                 self.store_combo.addItem(store['store_name'], store['id'])
-        except: pass
+        except (mysql.connector.Error, AttributeError, KeyError, TypeError):
+            pass
     
     def save_user(self):
         name = self.name_input.text().strip()

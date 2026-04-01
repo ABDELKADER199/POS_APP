@@ -1,14 +1,16 @@
-"""
+﻿"""
 صفحة إدارة المنتجات والمخزون
 Products & Inventory Management
 """
 
 import os
+import mysql.connector
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLineEdit,
                              QLabel, QTableWidget, QTableWidgetItem, QMessageBox,
                              QComboBox, QDoubleSpinBox, QSpinBox, QFileDialog,
                              QDialog, QFormLayout, QHeaderView, QTabWidget, QScrollArea, 
-                             QAbstractItemView, QDateEdit, QCheckBox)
+                             QAbstractItemView, QDateEdit, QCheckBox, QProgressDialog,
+                             QApplication)
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QFont, QColor
 from PyQt6.QtPrintSupport import QPrinterInfo
@@ -16,21 +18,31 @@ from database_manager import DatabaseManager
 from ui.styles import GLOBAL_STYLE, BUTTON_STYLES, get_button_style, COLORS, TABLE_STYLE, GROUP_BOX_STYLE, INPUT_STYLE, LABEL_STYLE_HEADER, LABEL_STYLE_TITLE, TAB_STYLE, CARD_STYLE
 import openpyxl
 from datetime import datetime
+from time import perf_counter
 from utils.printer_service import PrinterService
 
 class ProductsPage(QWidget):
     """صفحة إدارة المنتجات والمخزون"""
     data_changed = pyqtSignal()
     
-    def __init__(self, user_info=None, parent=None):
+    def __init__(self, user_info=None, parent=None, auto_load=True):
         super().__init__(parent)
         self.setStyleSheet(GLOBAL_STYLE)
         self.db = DatabaseManager()
         self.user_info = user_info or {}
+        self.auto_load = auto_load
         self.can_view_buy_price = True
+        self._products_total_count = 0
+        self._inventory_total_count = 0
+        self._products_loaded = False
+        self._inventory_loaded = False
+        self._barcode_loaded = False
+        self._max_barcode_rows = 300
         self.init_ui()
-        self.load_products()
-        self.load_barcode_products()
+        if self.auto_load:
+            self.load_products()
+            self.load_inventory()
+            self.load_barcode_products()
     
     def set_user(self, user_info):
         """تعيين بيانات المستخدم"""
@@ -46,17 +58,33 @@ class ProductsPage(QWidget):
                 res = cursor.fetchone()
                 if res and 'store_name' in res:
                     self.current_store_name = res['store_name']
-        except:
+        except (mysql.connector.Error, AttributeError, KeyError, TypeError):
             pass
 
         self.check_permissions()
-        self.load_products()
-        self.load_inventory() # Refresh inventory with new user permissions
+        if self.auto_load:
+            self.current_products_page = 1
+            self.current_inventory_page = 1
+            self.load_products()
+            self.load_inventory()
         # تحديث التبويبات الأخرى
         if hasattr(self, 'incoming_transfers_widget'):
             self.incoming_transfers_widget.set_user(self.user_info)
         if hasattr(self, 'category_mgmt_widget'):
             self.category_mgmt_widget.set_user(self.user_info)
+
+    def ensure_loaded(self, force=False):
+        """تحميل بيانات الصفحة عند الطلب (Lazy Loading)."""
+        if force or not self._products_loaded:
+            self.load_products()
+        if force or not self._inventory_loaded:
+            self.load_inventory()
+        if force or not self._barcode_loaded:
+            self.load_barcode_products()
+        if hasattr(self, 'incoming_transfers_widget') and hasattr(self.incoming_transfers_widget, 'ensure_loaded'):
+            self.incoming_transfers_widget.ensure_loaded(force=force)
+        if hasattr(self, 'category_mgmt_widget') and hasattr(self.category_mgmt_widget, 'ensure_loaded'):
+            self.category_mgmt_widget.ensure_loaded(force=force)
 
     def check_permissions(self):
         """التحقق من الصلاحيات لإظهار/إخفاء أزرار الإدارة"""
@@ -105,11 +133,11 @@ class ProductsPage(QWidget):
         self.tabs.addTab(inventory_widget, "المخزون")
 
         # تبويب التحويلات الواردة
-        self.incoming_transfers_widget = IncomingTransfersWidget(self.db, self.user_info)
+        self.incoming_transfers_widget = IncomingTransfersWidget(self.db, self.user_info, auto_load=False)
         self.tabs.addTab(self.incoming_transfers_widget, "التحويلات الواردة")
         
         # تبويب إدارة الفئات (للمسؤولين فقط)
-        self.category_mgmt_widget = CategoryManagementWidget(self.db, self.user_info)
+        self.category_mgmt_widget = CategoryManagementWidget(self.db, self.user_info, auto_load=False)
         self.tabs.addTab(self.category_mgmt_widget, "إدارة الفئات")
 
         # تبويب طباعة الباركود
@@ -298,9 +326,6 @@ class ProductsPage(QWidget):
         self.products_per_page = 50
         self.all_products = []
         
-        # Load products initially
-        self.load_products()
-        
         scroll.setWidget(container)
         return scroll
     
@@ -455,9 +480,6 @@ class ProductsPage(QWidget):
         self.current_inventory_page = 1
         self.inventory_per_page = 50
         self.all_inventory = []
-        
-        # Load initial inventory now that table is created
-        self.load_inventory()
         
         scroll.setWidget(container)
         return scroll
@@ -739,15 +761,7 @@ class ProductsPage(QWidget):
 
     def filter_barcode_products(self):
         """تصفية قائمة المنتجات في تبويب الباركود"""
-        search_text = self.barcode_search_input.text().lower()
-        for row in range(self.barcode_table.rowCount()):
-            match = False
-            for col in range(2):
-                item = self.barcode_table.item(row, col)
-                if item and search_text in item.text().lower():
-                    match = True
-                    break
-            self.barcode_table.setRowHidden(row, not match)
+        self.load_barcode_products()
 
     def load_barcode_products(self):
         """تحميل المنتجات في جدول الباركود مع دعم الفلاتر"""
@@ -755,6 +769,7 @@ class ProductsPage(QWidget):
             # Check for Advanced Filters
             supplier_id = self.barcode_supplier_filter.currentData()
             invoice_date = None
+            search_text = self.barcode_search_input.text().strip() if hasattr(self, 'barcode_search_input') else ""
             if self.barcode_date_check.isChecked():
                 invoice_date = self.barcode_date_filter.date().toPyDate().strftime('%Y-%m-%d')
             
@@ -762,9 +777,29 @@ class ProductsPage(QWidget):
                 # Use current store or 1
                 store_id = self.user_info.get('store_id') or 1
                 products = self.db.get_advanced_product_search(store_id, supplier_id, invoice_date)
+                if search_text:
+                    search_l = search_text.lower()
+                    products = [
+                        p for p in products
+                        if search_l in str(p.get('product_code', '')).lower()
+                        or search_l in str(p.get('product_name', '')).lower()
+                    ]
+                products = products[:self._max_barcode_rows]
             else:
                 cursor = self.db.cursor
-                cursor.execute("SELECT id, product_code, product_name, sell_price FROM products WHERE is_active = TRUE ORDER BY product_name")
+                params = []
+                query = """
+                    SELECT id, product_code, product_name, sell_price
+                    FROM products
+                    WHERE is_active = TRUE
+                """
+                if search_text:
+                    query += " AND (product_code LIKE %s OR product_name LIKE %s)"
+                    like = f"%{search_text}%"
+                    params.extend([like, like])
+                query += " ORDER BY product_name LIMIT %s"
+                params.append(self._max_barcode_rows)
+                cursor.execute(query, tuple(params))
                 products = cursor.fetchall()
             
             self.barcode_table.setRowCount(len(products))
@@ -809,6 +844,7 @@ class ProductsPage(QWidget):
             header_height = self.barcode_table.horizontalHeader().height()
             content_height = header_height + (len(products) * row_height) + 10
             self.barcode_table.setFixedHeight(min(content_height, 1200))
+            self._barcode_loaded = True
         except Exception as e:
             print(f"Error loading barcode products: {e}")
 
@@ -902,29 +938,73 @@ class ProductsPage(QWidget):
             # Temporarily disable sorting while loading
             self.products_table.setSortingEnabled(False)
             
-            # Check for Advanced Filters
+            # Check for Advanced Filters + Search
             supplier_id = self.prod_supplier_filter.currentData()
             invoice_date = None
+            search_text = self.search_input.text().strip() if hasattr(self, 'search_input') else ""
             if self.prod_date_check.isChecked():
                 invoice_date = self.prod_date_filter.date().toPyDate().strftime('%Y-%m-%d')
             
             # 1. Fetch Data
             if supplier_id or invoice_date:
-                # Use Advanced Search if filters applied
+                # Advanced Search (in-memory pagination after filtered query)
                 store_id = self.user_info.get('store_id') or 1
                 self.all_products = self.db.get_advanced_product_search(store_id, supplier_id, invoice_date)
+                if search_text:
+                    s = search_text.lower()
+                    self.all_products = [
+                        p for p in self.all_products
+                        if s in str(p.get('product_code', '')).lower()
+                        or s in str(p.get('product_name', '')).lower()
+                        or s in str(p.get('supplier_name', '')).lower()
+                    ]
+                total_products = len(self.all_products)
+                self._products_total_count = total_products
+                total_pages = max(1, (total_products + self.products_per_page - 1) // self.products_per_page)
+                if self.current_products_page > total_pages:
+                    self.current_products_page = total_pages
+                start_idx = (self.current_products_page - 1) * self.products_per_page
+                end_idx = min(start_idx + self.products_per_page, total_products)
+                page_products = self.all_products[start_idx:end_idx]
             else:
-                # Normal View - Fetch all products
+                # Normal View - Server-side pagination (fast for large datasets)
                 cursor = self.db.cursor
-                cursor.execute("""
+                where_clause = " WHERE p.is_active = TRUE "
+                params = []
+                if search_text:
+                    where_clause += " AND (p.product_code LIKE %s OR p.product_name LIKE %s OR COALESCE(s.name, '') LIKE %s) "
+                    like = f"%{search_text}%"
+                    params.extend([like, like, like])
+
+                count_query = f"""
+                    SELECT COUNT(*) AS total_count
+                    FROM products p
+                    LEFT JOIN suppliers s ON p.supplier_id = s.id
+                    {where_clause}
+                """
+                cursor.execute(count_query, tuple(params))
+                total_products = int((cursor.fetchone() or {}).get('total_count', 0))
+                self._products_total_count = total_products
+
+                total_pages = max(1, (total_products + self.products_per_page - 1) // self.products_per_page)
+                if self.current_products_page > total_pages:
+                    self.current_products_page = total_pages
+
+                offset = (self.current_products_page - 1) * self.products_per_page
+                data_query = f"""
                     SELECT p.id, p.product_code, p.product_name, c.category_name,
                            p.buy_price, p.sell_price, p.unit, s.name as supplier_name
                     FROM products p
                     LEFT JOIN categories c ON p.category_id = c.id
                     LEFT JOIN suppliers s ON p.supplier_id = s.id
+                    {where_clause}
                     ORDER BY p.product_name
-                """)
-                self.all_products = cursor.fetchall()
+                    LIMIT %s OFFSET %s
+                """
+                page_params = params + [self.products_per_page, offset]
+                cursor.execute(data_query, tuple(page_params))
+                page_products = cursor.fetchall()
+                self.all_products = page_products
             
             # 2. Unified Table Configuration (8 Columns)
             self.products_table.setColumnCount(8)
@@ -941,23 +1021,14 @@ class ProductsPage(QWidget):
             
             actions_col = 7
             
-            total_products = len(self.all_products)
+            total_products = self._products_total_count if self._products_total_count else len(page_products)
             
             # Update product count label
             if hasattr(self, 'products_count_label'):
                 self.products_count_label.setText(f"إجمالي المنتجات: {total_products} منتج")
             
-            # Calculate pagination
+            # Calculate pagination (already computed in fetch block, keep as fallback)
             total_pages = max(1, (total_products + self.products_per_page - 1) // self.products_per_page)
-            
-            # Ensure current page is valid
-            if self.current_products_page > total_pages:
-                self.current_products_page = total_pages
-            
-            # Get products for current page
-            start_idx = (self.current_products_page - 1) * self.products_per_page
-            end_idx = min(start_idx + self.products_per_page, total_products)
-            page_products = self.all_products[start_idx:end_idx]
             
             # Update table
             self.products_table.clearContents()
@@ -1067,10 +1138,11 @@ class ProductsPage(QWidget):
             header_height = self.products_table.horizontalHeader().height()
             content_height = header_height + (len(page_products) * row_height) + 10
             self.products_table.setFixedHeight(min(content_height, 1200))
+            self._products_loaded = True
         
         except Exception as e:
             QMessageBox.critical(self, "خطأ", f"خطأ في تحميل المنتجات: {str(e)}")
-            QMessageBox.critical(self, "خطأ", f"خطأ في تحميل المنتجات: {str(e)}")
+
     
     def load_inventory(self):
         """تحميل المخزون مع دعم الفلاتر المتقدمة والترقيم"""
@@ -1085,6 +1157,7 @@ class ProductsPage(QWidget):
             # Check for Advanced Filters
             supplier_id = self.inv_supplier_filter.currentData()
             invoice_date = None
+            search_text = self.inventory_search_input.text().strip() if hasattr(self, 'inventory_search_input') else ""
             if self.inv_date_check.isChecked():
                 invoice_date = self.inv_date_filter.date().toPyDate().strftime('%Y-%m-%d')
             
@@ -1120,37 +1193,70 @@ class ProductsPage(QWidget):
             if supplier_id or invoice_date:
                 # Advanced Search (Filtered by Supplier/Date)
                 self.all_inventory = self.db.get_advanced_product_search(target_store_id, supplier_id, invoice_date)
+                if search_text:
+                    s = search_text.lower()
+                    self.all_inventory = [
+                        it for it in self.all_inventory
+                        if s in str(it.get('product_code', '')).lower()
+                        or s in str(it.get('product_name', '')).lower()
+                    ]
+                total_inventory = len(self.all_inventory)
+                self._inventory_total_count = total_inventory
+                total_pages = max(1, (total_inventory + self.inventory_per_page - 1) // self.inventory_per_page)
+                if self.current_inventory_page > total_pages:
+                    self.current_inventory_page = total_pages
+                start_idx = (self.current_inventory_page - 1) * self.inventory_per_page
+                end_idx = min(start_idx + self.inventory_per_page, total_inventory)
+                page_inventory = self.all_inventory[start_idx:end_idx]
             else:
-                # Normal View
+                # Normal View (Server-side pagination for large datasets)
                 cursor = self.db.cursor
-                cursor.execute("""
+                search_clause = ""
+                search_params = []
+                if search_text:
+                    search_clause = " AND (p.product_code LIKE %s OR p.product_name LIKE %s)"
+                    like = f"%{search_text}%"
+                    search_params.extend([like, like])
+
+                count_query = f"""
+                    SELECT COUNT(*) AS total_count
+                    FROM products p
+                    WHERE p.is_active = TRUE
+                    {search_clause}
+                """
+                cursor.execute(count_query, tuple(search_params))
+                total_inventory = int((cursor.fetchone() or {}).get('total_count', 0))
+                self._inventory_total_count = total_inventory
+
+                total_pages = max(1, (total_inventory + self.inventory_per_page - 1) // self.inventory_per_page)
+                if self.current_inventory_page > total_pages:
+                    self.current_inventory_page = total_pages
+
+                offset = (self.current_inventory_page - 1) * self.inventory_per_page
+                data_query = f"""
                     SELECT p.id as product_id, p.product_code, p.product_name, 
                            COALESCE(i.quantity_in_stock, 0) as quantity_in_stock, 
                            COALESCE(i.minimum_quantity, 0) as minimum_quantity
                     FROM products p
                     LEFT JOIN product_inventory i ON p.id = i.product_id AND i.store_id = %s
                     WHERE p.is_active = TRUE
+                    {search_clause}
                     ORDER BY p.product_name
-                """, (target_store_id,))
-                self.all_inventory = cursor.fetchall()
+                    LIMIT %s OFFSET %s
+                """
+                data_params = [target_store_id] + search_params + [self.inventory_per_page, offset]
+                cursor.execute(data_query, tuple(data_params))
+                page_inventory = cursor.fetchall()
+                self.all_inventory = page_inventory
                 
-            total_inventory = len(self.all_inventory)
+            total_inventory = self._inventory_total_count if self._inventory_total_count else len(page_inventory)
             
             # Update inventory count label
             if hasattr(self, 'inventory_count_label'):
                 self.inventory_count_label.setText(f"إجمالي الأصناف: {total_inventory} صنف")
             
-            # Calculate pagination
+            # Calculate pagination (already computed in fetch block, keep as fallback)
             total_pages = max(1, (total_inventory + self.inventory_per_page - 1) // self.inventory_per_page)
-            
-            # Ensure current page is valid
-            if self.current_inventory_page > total_pages:
-                self.current_inventory_page = total_pages
-            
-            # Get inventory for current page
-            start_idx = (self.current_inventory_page - 1) * self.inventory_per_page
-            end_idx = min(start_idx + self.inventory_per_page, total_inventory)
-            page_inventory = self.all_inventory[start_idx:end_idx]
             
             # Determine correct columns and count
             if supplier_id or invoice_date:
@@ -1306,6 +1412,7 @@ class ProductsPage(QWidget):
             header_height = self.inventory_table.horizontalHeader().height()
             content_height = header_height + (len(page_inventory) * row_height) + 10
             self.inventory_table.setFixedHeight(min(content_height, 1200))
+            self._inventory_loaded = True
 
         except Exception as e:
             QMessageBox.critical(self, "خطأ", f"خطأ في تحميل المخزون: {str(e)}")
@@ -1380,34 +1487,16 @@ class ProductsPage(QWidget):
             self.data_changed.emit()
     
     def filter_products(self):
-        """تصفية المنتجات"""
-        search_text = self.search_input.text().lower()
-        for row in range(self.products_table.rowCount()):
-            match = False
-            # Check Code (0), Name (1), Supplier (7), Date (8)
-            for col in [0, 1, 7, 8]:
-                item = self.products_table.item(row, col)
-                if item and search_text in item.text().lower():
-                    match = True
-                    break
-            self.products_table.setRowHidden(row, not match)
-
+        """Filter products using server-side query."""
+        self.current_products_page = 1
+        self.load_products()
     def filter_inventory(self):
-        """تصفية المخزون"""
-        search_text = self.inventory_search_input.text().lower()
-        for row in range(self.inventory_table.rowCount()):
-            match = False
-            # Search in Code (Col 0) and Name (Col 1)
-            for col in range(2):
-                item = self.inventory_table.item(row, col)
-                if item and search_text in item.text().lower():
-                    match = True
-                    break
-            self.inventory_table.setRowHidden(row, not match)
-    
+        """Filter inventory using server-side query."""
+        self.current_inventory_page = 1
+        self.load_inventory()
     def next_products_page(self):
         """الانتقال للصفحة التالية"""
-        total_products = len(self.all_products)
+        total_products = self._products_total_count if self._products_total_count else len(self.all_products)
         total_pages = max(1, (total_products + self.products_per_page - 1) // self.products_per_page)
         if self.current_products_page < total_pages:
             self.current_products_page += 1
@@ -1524,7 +1613,7 @@ class ProductsPage(QWidget):
     
     def next_inventory_page(self):
         """الانتقال للصفحة التالية في المخزون"""
-        total_inventory = len(self.all_inventory)
+        total_inventory = self._inventory_total_count if self._inventory_total_count else len(self.all_inventory)
         total_pages = max(1, (total_inventory + self.inventory_per_page - 1) // self.inventory_per_page)
         if self.current_inventory_page < total_pages:
             self.current_inventory_page += 1
@@ -1538,72 +1627,319 @@ class ProductsPage(QWidget):
             
             
     def import_from_excel(self):
-        """استيراد Excel (مختصر)"""
+        """استيراد سريع من Excel عبر دفعات (Batch Import)."""
         file_path, _ = QFileDialog.getOpenFileName(
             self, "اختر ملف Excel", "", "Excel Files (*.xlsx *.xls)"
         )
-        
         if not file_path:
             return
-        
+
+        if not self.db or not self.db.cursor or not self.db.conn:
+            QMessageBox.critical(self, "خطأ", "لا يوجد اتصال بقاعدة البيانات.")
+            return
+
+        def to_text(value):
+            if value is None:
+                return ""
+            if isinstance(value, float) and value.is_integer():
+                return str(int(value))
+            return str(value).strip()
+
+        def to_int(value, default=0):
+            if value in (None, ""):
+                return default
+            try:
+                if isinstance(value, bool):
+                    return default
+                return int(float(value))
+            except (TypeError, ValueError):
+                return default
+
+        def to_float(value, default=0.0):
+            if value in (None, ""):
+                return default
+            try:
+                if isinstance(value, bool):
+                    return default
+                return float(value)
+            except (TypeError, ValueError):
+                return default
+
+        wb = None
+        progress = None
+        started_at = perf_counter()
+
         try:
-            wb = openpyxl.load_workbook(file_path)
+            cursor = self.db.cursor
+            conn = self.db.conn
+
+            wb = openpyxl.load_workbook(file_path, read_only=True, data_only=True)
             ws = wb.active
-            
-            imported = 0
+
+            total_rows = max((ws.max_row or 1) - 1, 0)
+            progress = QProgressDialog("جارٍ تجهيز الاستيراد...", "إلغاء", 0, max(total_rows, 1), self)
+            progress.setWindowTitle("استيراد المنتجات")
+            progress.setWindowModality(Qt.WindowModality.WindowModal)
+            progress.setMinimumDuration(0)
+            progress.setValue(0)
+
+            cursor.execute("SELECT id FROM stores WHERE is_active = TRUE ORDER BY id")
+            store_ids = [int(row['id']) for row in cursor.fetchall()]
+            if not store_ids:
+                raise Exception("لا توجد فروع نشطة لإضافة المخزون.")
+
+            store_id = int(self.user_info.get('store_id') or store_ids[0])
+            if store_id not in store_ids:
+                store_ids.append(store_id)
+
+            cursor.execute("SELECT id, name FROM suppliers")
+            supplier_cache = {}
+            for row in cursor.fetchall():
+                supplier_name = str(row.get('name') or "").strip().lower()
+                if supplier_name:
+                    supplier_cache[supplier_name] = int(row['id'])
+
+            cursor.execute("SELECT id FROM categories")
+            category_ids = {int(row['id']) for row in cursor.fetchall() if row.get('id') is not None}
+            if not category_ids:
+                cursor.execute(
+                    "INSERT INTO categories (category_name, description) VALUES (%s, %s)",
+                    ("عام", "تصنيف افتراضي تم إنشاؤه تلقائياً")
+                )
+                default_category_id = int(cursor.lastrowid)
+                category_ids.add(default_category_id)
+            else:
+                default_category_id = 1 if 1 in category_ids else min(category_ids)
+
+            product_upsert_sql = """
+                INSERT INTO products (
+                    product_code, product_name, category_id, buy_price,
+                    sell_price, supplier_id, unit, barcode, description, is_active
+                )
+                VALUES (%s, %s, %s, %s, %s, %s, %s, NULL, NULL, TRUE)
+                ON DUPLICATE KEY UPDATE
+                    product_name = VALUES(product_name),
+                    category_id = VALUES(category_id),
+                    buy_price = VALUES(buy_price),
+                    sell_price = VALUES(sell_price),
+                    supplier_id = VALUES(supplier_id),
+                    unit = VALUES(unit),
+                    is_active = TRUE
+            """
+
+            inventory_upsert_sql = """
+                INSERT INTO product_inventory (product_id, store_id, quantity_in_stock)
+                VALUES (%s, %s, %s)
+                ON DUPLICATE KEY UPDATE
+                    quantity_in_stock = quantity_in_stock + VALUES(quantity_in_stock)
+            """
+
+            def fetch_product_ids(codes):
+                code_to_id = {}
+                fetch_chunk_size = 600
+                for i in range(0, len(codes), fetch_chunk_size):
+                    chunk_codes = codes[i:i + fetch_chunk_size]
+                    placeholders = ", ".join(["%s"] * len(chunk_codes))
+                    query = f"SELECT id, product_code FROM products WHERE product_code IN ({placeholders})"
+                    cursor.execute(query, tuple(chunk_codes))
+                    for product_row in cursor.fetchall():
+                        code_to_id[str(product_row['product_code'])] = int(product_row['id'])
+                return code_to_id
+
+            def flush_batch(batch_map):
+                if not batch_map:
+                    return 0, 0
+
+                records = list(batch_map.values())
+                product_rows = [
+                    (
+                        rec['code'], rec['name'], rec['category_id'], rec['buy_price'],
+                        rec['sell_price'], rec['supplier_id'], rec['unit']
+                    )
+                    for rec in records
+                ]
+                cursor.executemany(product_upsert_sql, product_rows)
+
+                codes = [rec['code'] for rec in records]
+                code_to_id = fetch_product_ids(codes)
+
+                inventory_rows = []
+                resolved = 0
+                unresolved = 0
+                for rec in records:
+                    product_id = code_to_id.get(rec['code'])
+                    if not product_id:
+                        unresolved += 1
+                        continue
+
+                    resolved += 1
+                    qty = rec['initial_qty']
+                    for sid in store_ids:
+                        inventory_rows.append((product_id, sid, qty if sid == store_id else 0))
+
+                if inventory_rows:
+                    cursor.executemany(inventory_upsert_sql, inventory_rows)
+
+                return resolved, unresolved
+
+            batch_limit = 2000
+            batch_rows = 0
+            batch_map = {}
+
+            processed_rows = 0
+            valid_rows = 0
+            upsert_ops = 0
+            created_suppliers = 0
+            skipped = 0
             errors = 0
-            
+            unique_codes = set()
+            cancelled = False
+            error_samples = []
+
             for row in ws.iter_rows(min_row=2, values_only=True):
+                if progress.wasCanceled():
+                    cancelled = True
+                    break
+
+                processed_rows += 1
+
                 try:
-                    # نتحقق من وجود كود واسم على الأقل
-                    if len(row) >= 2 and row[0] and row[1]:
-                        code = str(row[0]).strip()
-                        name = str(row[1]).strip()
-                        category_id = int(row[2]) if (len(row) > 2 and row[2]) else 1
-                        purchase = float(row[3]) if (len(row) > 3 and row[3] is not None) else 0.0
-                        sale = float(row[4]) if (len(row) > 4 and row[4] is not None) else 0.0
-                        unit = str(row[5]).strip() if (len(row) > 5 and row[5]) else "قطعة"
-                        supplier_name = str(row[6]).strip() if (len(row) > 6 and row[6]) else None
-                        initial_qty = int(row[7]) if (len(row) > 7 and row[7] is not None) else 0
-                        
-                        store_id = self.user_info.get('store_id') or 1
-                        
-                        if not supplier_name:
-                            raise Exception("المورد مطلوب")
-                            
-                        # جلب ID المورد بالاسم أو إنشاء مورد جديد؟ الأفضل جلب الموجود فقط أو التنبيه
-                        self.db.cursor.execute("SELECT id FROM suppliers WHERE name = %s", (supplier_name,))
-                        sup_res = self.db.cursor.fetchone()
-                        if not sup_res:
-                            raise Exception(f"المورد '{supplier_name}' غير موجود في النظام")
-                        
-                        supplier_id = sup_res['id']
-                        
-                        self.db.add_product(
-                            product_code=code,
-                            product_name=name,
-                            category_id=category_id,
-                            buy_price=purchase,
-                            sell_price=sale,
-                            supplier_id=supplier_id,
-                            unit=unit,
-                            initial_stock=initial_qty,
-                            store_id=store_id
+                    code = to_text(row[0] if len(row) > 0 else None)
+                    name = to_text(row[1] if len(row) > 1 else None)
+
+                    if not code or not name:
+                        skipped += 1
+                        continue
+
+                    raw_category = row[2] if len(row) > 2 else None
+                    category_id = to_int(raw_category, default_category_id)
+                    if category_id not in category_ids:
+                        category_id = default_category_id
+
+                    buy_price = to_float(row[3] if len(row) > 3 else None, 0.0)
+                    sell_price = to_float(row[4] if len(row) > 4 else None, 0.0)
+                    unit = to_text(row[5] if len(row) > 5 else None) or "قطعة"
+                    supplier_name = to_text(row[6] if len(row) > 6 else None)
+                    initial_qty = to_int(row[7] if len(row) > 7 else None, 0)
+
+                    if not supplier_name:
+                        raise ValueError("المورد مطلوب")
+
+                    supplier_key = supplier_name.lower()
+                    supplier_id = supplier_cache.get(supplier_key)
+                    if supplier_id is None:
+                        cursor.execute(
+                            """
+                            INSERT INTO suppliers
+                            (name, opening_balance, current_balance, notes, is_active)
+                            VALUES (%s, 0, 0, %s, TRUE)
+                            """,
+                            (supplier_name, "تم إنشاؤه تلقائياً أثناء استيراد Excel")
                         )
-                        imported += 1
-                except Exception as e:
+                        supplier_id = int(cursor.lastrowid)
+                        supplier_cache[supplier_key] = supplier_id
+                        created_suppliers += 1
+
+                    existing = batch_map.get(code)
+                    if existing:
+                        existing['initial_qty'] += initial_qty
+                        existing['name'] = name
+                        existing['category_id'] = category_id
+                        existing['buy_price'] = buy_price
+                        existing['sell_price'] = sell_price
+                        existing['supplier_id'] = supplier_id
+                        existing['unit'] = unit
+                    else:
+                        batch_map[code] = {
+                            'code': code,
+                            'name': name,
+                            'category_id': category_id,
+                            'buy_price': buy_price,
+                            'sell_price': sell_price,
+                            'supplier_id': supplier_id,
+                            'unit': unit,
+                            'initial_qty': initial_qty,
+                        }
+
+                    unique_codes.add(code)
+                    valid_rows += 1
+                    batch_rows += 1
+
+                    if batch_rows >= batch_limit:
+                        upserted_now, unresolved_now = flush_batch(batch_map)
+                        upsert_ops += upserted_now
+                        errors += unresolved_now
+                        conn.commit()
+                        batch_map.clear()
+                        batch_rows = 0
+
+                except Exception as row_err:
                     errors += 1
-                    print(f"❌ خطأ في الصف {row}: {e}")
-            
-            QMessageBox.information(
-                self, "نجاح",
-                f"تم استيراد {imported} منتج بنجاح\nأخطاء: {errors}"
-            )
+                    if len(error_samples) < 5:
+                        error_samples.append(f"صف {processed_rows + 1}: {row_err}")
+
+                if processed_rows % 200 == 0 or processed_rows == total_rows:
+                    progress.setValue(min(processed_rows, max(total_rows, 1)))
+                    progress.setLabelText(
+                        f"جارٍ الاستيراد... {processed_rows}/{total_rows} | صالح: {valid_rows} | أكواد فريدة: {len(unique_codes)}"
+                    )
+                    QApplication.processEvents()
+
+            if batch_map:
+                upserted_now, unresolved_now = flush_batch(batch_map)
+                upsert_ops += upserted_now
+                errors += unresolved_now
+                conn.commit()
+
+            elapsed = perf_counter() - started_at
+            progress.setValue(max(total_rows, 1))
+
             self.refresh_all_data()
             self.data_changed.emit()
-        
+
+            summary_lines = [
+                f"الصفوف المقروءة: {processed_rows}",
+                f"الصفوف الصالحة: {valid_rows}",
+                f"أكواد المنتجات الفريدة: {len(unique_codes)}",
+                f"عمليات الحفظ (Upsert): {upsert_ops}",
+                f"موردون جدد: {created_suppliers}",
+                f"الصفوف المتخطاة (بدون كود/اسم): {skipped}",
+                f"الأخطاء: {errors}",
+                f"المدة: {elapsed:.1f} ثانية",
+            ]
+
+            if error_samples:
+                summary_lines.append("")
+                summary_lines.append("أول الأخطاء:")
+                summary_lines.extend(error_samples)
+
+            if cancelled:
+                QMessageBox.warning(
+                    self,
+                    "تم إيقاف الاستيراد",
+                    "تم إيقاف العملية بواسطة المستخدم.\n\n" + "\n".join(summary_lines)
+                )
+            else:
+                QMessageBox.information(
+                    self,
+                    "نجاح",
+                    "تم الاستيراد بنجاح.\n\n" + "\n".join(summary_lines)
+                )
+
         except Exception as e:
+            try:
+                self.db.conn.rollback()
+            except Exception:
+                pass
             QMessageBox.critical(self, "خطأ", f"خطأ في الاستيراد: {str(e)}")
+        finally:
+            if wb:
+                try:
+                    wb.close()
+                except Exception:
+                    pass
+            if progress:
+                progress.close()
     
     def fix_zero_costs_dialog(self):
         """نافذة لتأكيد إصلاح التكاليف الصفرية"""
@@ -1989,7 +2325,8 @@ class TransferDialog(QDialog):
             stores = cursor.fetchall()
             for s in stores:
                 self.store_combo.addItem(s['store_name'], s['id'])
-        except: pass
+        except (mysql.connector.Error, AttributeError, KeyError, TypeError):
+            pass
         
     def load_source_qty(self):
         try:
@@ -2000,7 +2337,8 @@ class TransferDialog(QDialog):
             max_qty = res['quantity_in_stock'] if res else 0
             self.qty_spin.setMaximum(max_qty)
             self.setWindowTitle(f"نقل مخزون (المتاح: {max_qty})")
-        except: pass
+        except (mysql.connector.Error, AttributeError, KeyError, TypeError):
+            pass
 
     def save(self):
         to_store = self.store_combo.currentData()
@@ -2040,7 +2378,8 @@ class InventoryDialog(QDialog):
             if r: 
                 self.qty.setValue(r['quantity_in_stock'])
                 self.min_qty.setValue(r['minimum_quantity'])
-        except: pass
+        except (mysql.connector.Error, AttributeError, KeyError, TypeError):
+            pass
         
         layout.addWidget(QLabel("الكمية الفعلية في المخزن:"))
         layout.addWidget(self.qty)
@@ -2067,10 +2406,12 @@ class InventoryDialog(QDialog):
 
 class IncomingTransfersWidget(QWidget):
     """ويدجت عرض واستلام التحويلات الواردة"""
-    def __init__(self, db, user_info, parent=None):
+    def __init__(self, db, user_info, parent=None, auto_load=True):
         super().__init__(parent)
         self.db = db
         self.user_info = user_info
+        self.auto_load = auto_load
+        self._is_loaded = False
         self.current_store_id = None
         self.init_ui()
         
@@ -2085,8 +2426,16 @@ class IncomingTransfersWidget(QWidget):
                 # Reset selection if needed, or keep it
             else:
                 self.filter_combo.setVisible(False)
-        
-        self.load_transfers()
+
+        if self.auto_load or self._is_loaded:
+            self.ensure_loaded(force=True)
+
+    def ensure_loaded(self, force=False):
+        """Load incoming transfers only when needed."""
+        if force or not self._is_loaded:
+            self.load_stores_filter()
+            self.load_transfers()
+            self._is_loaded = True
 
     def init_ui(self):
         layout = QVBoxLayout()
@@ -2102,7 +2451,8 @@ class IncomingTransfersWidget(QWidget):
         # فلتر الفروع (للأدمن فقط)
         self.filter_combo = QComboBox()
         self.filter_combo.addItem("كافة الفروع", None)
-        self.load_stores_filter()
+        if self.auto_load:
+            self.load_stores_filter()
         self.filter_combo.currentIndexChanged.connect(lambda: self.load_transfers())
         
         # سيتم ضبط ظهوره في load_transfers أو set_user، ولكن هنا كبداية
@@ -2149,16 +2499,25 @@ class IncomingTransfersWidget(QWidget):
         
         self.setLayout(layout)
         # Initial load logic handling
-        self.load_transfers()
+        if self.auto_load:
+            self.load_transfers()
+            self._is_loaded = True
         
     def load_stores_filter(self):
         try:
+            self.filter_combo.blockSignals(True)
+            self.filter_combo.clear()
+            self.filter_combo.addItem("كافة الفروع", None)
             cursor = self.db.cursor
             cursor.execute("SELECT id, store_name FROM stores WHERE is_active = TRUE")
             stores = cursor.fetchall()
             for s in stores:
                 self.filter_combo.addItem(s['store_name'], s['id'])
-        except: pass
+            self.filter_combo.blockSignals(False)
+        except (mysql.connector.Error, AttributeError, KeyError, TypeError):
+            if hasattr(self, 'filter_combo'):
+                self.filter_combo.blockSignals(False)
+            pass
 
     def load_transfers(self, target_store_id=None):
         """تحميل التحويلات المعلقة
@@ -2167,7 +2526,7 @@ class IncomingTransfersWidget(QWidget):
         user_role = str(self.user_info.get('role_name', '')).lower()
         try:
             user_store_id = int(self.user_info.get('store_id', 0))
-        except:
+        except (TypeError, ValueError):
             user_store_id = 0
             
         final_store_id = None
@@ -2210,7 +2569,7 @@ class IncomingTransfersWidget(QWidget):
             can_receive = False
             try:
                 row_to_store_id = int(t.get('to_store_id'))
-            except:
+            except (TypeError, ValueError):
                 row_to_store_id = None
             
             if 'admin' in user_role:
@@ -2264,15 +2623,25 @@ class IncomingTransfersWidget(QWidget):
 
 class CategoryManagementWidget(QWidget):
     """ويدجت إدارة فئات المنتجات"""
-    def __init__(self, db, user_info, parent=None):
+    def __init__(self, db, user_info, parent=None, auto_load=True):
         super().__init__(parent)
         self.db = db
         self.user_info = user_info
+        self.auto_load = auto_load
+        self._is_loaded = False
         self.init_ui()
+        if self.auto_load:
+            self.ensure_loaded(force=True)
         
     def set_user(self, user_info):
         self.user_info = user_info
-        self.load_categories()
+        if self.auto_load or self._is_loaded:
+            self.ensure_loaded(force=True)
+
+    def ensure_loaded(self, force=False):
+        if force or not self._is_loaded:
+            self.load_categories()
+            self._is_loaded = True
 
     def init_ui(self):
         layout = QVBoxLayout()
@@ -2331,7 +2700,6 @@ class CategoryManagementWidget(QWidget):
         
         layout.addWidget(self.table)
         self.setLayout(layout)
-        self.load_categories()
 
     def load_categories(self):
         categories = self.db.get_categories()

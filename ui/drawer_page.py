@@ -564,6 +564,13 @@ class DrawerPage(QWidget):
                 
                 if self.db.close_drawer(drawer_id, cash_total, details):
                      QMessageBox.information(self, "نجاح", "تم إغلاق الدرج بنجاح")
+                     
+                     # 1. إجبار المزامنة كما طلب المستخدم
+                     from ui.sync_dialog import run_mandatory_sync
+                     from utils.sync_manager import SyncManager
+                     temp_sync = SyncManager()
+                     run_mandatory_sync(temp_sync, self, "يجب مزامنة البيانات قبل الخروج")
+                     
                      self.check_drawer_status()
                      self.drawer_closed.emit()
                      

@@ -13,15 +13,25 @@ class ExpensesPage(QWidget):
     """صفحة المصروفات وتقارير الأرباح"""
     data_changed = pyqtSignal()
     
-    def __init__(self, db_manager, current_user):
+    def __init__(self, db_manager, current_user, auto_load=True):
         super().__init__()
         self.db = db_manager
         self.user = current_user
+        self.auto_load = auto_load
+        self._is_loaded = False
         self.init_ui()
+        if self.auto_load and self.user:
+            self.refresh_ui()
         
     def set_user(self, user_info):
         self.user = user_info
-        self.refresh_ui()
+        if self.auto_load or self._is_loaded:
+            self.refresh_ui()
+
+    def ensure_loaded(self, force=False):
+        """Load expenses data lazily when accounts tab is opened."""
+        if force or not self._is_loaded:
+            self.refresh_ui()
         
     def init_ui(self):
         # --- Scroll Area Setup ---
@@ -62,6 +72,7 @@ class ExpensesPage(QWidget):
         if self.user:
             self.update_access_control()
             self.load_expenses()
+            self._is_loaded = True
             
     def update_access_control(self):
         """Update UI based on user role"""

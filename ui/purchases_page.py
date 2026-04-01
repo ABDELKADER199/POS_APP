@@ -325,16 +325,28 @@ class AddSupplierDialog(QDialog):
 class PurchasesPage(QWidget):
     """صفحة إدارة المشتريات والموردين - تصميم عصري"""
     
-    def __init__(self, db_manager, user_info):
+    def __init__(self, db_manager, user_info, auto_load=True):
         super().__init__()
         self.setObjectName("PurchasesPage")
         self.db = db_manager
         self.user = user_info
+        self.auto_load = auto_load
+        self._is_loaded = False
         self.cart = []
         self.init_ui()
+        if self.auto_load:
+            self._is_loaded = True
         
     def set_user(self, user_info):
         self.user = user_info
+
+    def ensure_loaded(self, force=False):
+        """Lazy-load purchases data only when accounts tab is opened."""
+        if force or not self._is_loaded:
+            self.load_suppliers()
+            self.load_suppliers_table()
+            self.load_history()
+            self._is_loaded = True
         
     def init_ui(self):
         self.setStyleSheet(PAGE_STYLE + PURCH_INPUT_STYLE)
@@ -622,7 +634,8 @@ class PurchasesPage(QWidget):
         layout.addWidget(save_btn)
         
         # Load
-        self.load_suppliers()
+        if self.auto_load:
+            self.load_suppliers()
 
     # ═══════════ Suppliers Tab ═══════════
     def setup_suppliers_tab(self):
@@ -660,7 +673,8 @@ class PurchasesPage(QWidget):
         self.sup_table.verticalHeader().setDefaultSectionSize(38)
         layout.addWidget(self.sup_table, 1)
         
-        self.load_suppliers_table()
+        if self.auto_load:
+            self.load_suppliers_table()
     
     # ═══════════ History Tab ═══════════
     def setup_history_tab(self):
@@ -694,7 +708,8 @@ class PurchasesPage(QWidget):
         self.hist_table.horizontalHeader().setSectionResizeMode(9, QHeaderView.ResizeMode.Fixed)
         layout.addWidget(self.hist_table, 1)
         
-        self.load_history()
+        if self.auto_load:
+            self.load_history()
 
     # ========================================
     # Logic
@@ -955,7 +970,9 @@ class PurchasesPage(QWidget):
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
         
         if confirm == QMessageBox.StandardButton.Yes:
+
             invoice_id = self.db.create_purchase_invoice(
+
                 supplier_id=supplier_id,
                 total_amount=final_total,
                 items=self.cart,
@@ -967,6 +984,7 @@ class PurchasesPage(QWidget):
                 subtotal=subtotal,
                 tax_amount=self.tax_input.value(),
                 discount_amount=self.discount_input.value()
+                
             )
             
             if invoice_id:

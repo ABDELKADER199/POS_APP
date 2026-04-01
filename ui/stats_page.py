@@ -17,12 +17,15 @@ import openpyxl
 class StatsPage(QWidget):
     """صفحة عرض إحصائيات المبيعات والمرتجعات مع رسوم بيانية"""
     
-    def __init__(self, db_manager, parent=None):
+    def __init__(self, db_manager, parent=None, auto_load=True):
         super().__init__(parent)
         self.db = db_manager
         self.setStyleSheet(f"background-color: {COLORS['bg_main']};")
+        self.auto_load = auto_load
         self.selected_store_id = None
         self.user_info = None
+        self._is_loaded = False
+        self._stores_loaded = False
         self.view_sections = {} # Dictionary to store toggleable widgets
         self.init_ui()
 
@@ -74,7 +77,38 @@ class StatsPage(QWidget):
         layout.addWidget(scroll)
         
         # Initial Load
-        self.refresh_data()
+        if self.auto_load:
+            self.refresh_data()
+
+    def ensure_loaded(self, force=False):
+        """Load stats data lazily when the tab is opened."""
+        if force or not self._is_loaded:
+            self._ensure_stores_loaded(force=force)
+            self.refresh_data()
+
+    def _ensure_stores_loaded(self, force=False):
+        """Populate store filter lazily to avoid DB work during dashboard startup."""
+        if not hasattr(self, 'store_combo'):
+            return
+        if (not force) and self._stores_loaded:
+            return
+
+        selected = self.store_combo.currentData()
+        self.store_combo.blockSignals(True)
+        self.store_combo.clear()
+        self.store_combo.addItem("الكل", None)
+
+        stores = self.db.get_all_stores(include_inactive=True)
+        for store in stores:
+            self.store_combo.addItem(store['store_name'], store['id'])
+
+        if selected is not None:
+            idx = self.store_combo.findData(selected)
+            if idx >= 0:
+                self.store_combo.setCurrentIndex(idx)
+
+        self.store_combo.blockSignals(False)
+        self._stores_loaded = True
 
     def create_header_section(self):
         """Header and Filters"""
@@ -101,10 +135,8 @@ class StatsPage(QWidget):
         self.store_combo.setStyleSheet(GLOBAL_STYLE)
         self.store_combo.setMinimumWidth(150)
         self.store_combo.addItem("الكل", None)
-        # Load stores (including inactive ones for historical data)
-        stores = self.db.get_all_stores(include_inactive=True)
-        for store in stores:
-            self.store_combo.addItem(store['store_name'], store['id'])
+        if self.auto_load:
+            self._ensure_stores_loaded(force=True)
         header_layout.addWidget(self.store_combo)
 
         # Date Presets
@@ -499,6 +531,7 @@ class StatsPage(QWidget):
 
     def refresh_data(self):
         try:
+            self._is_loaded = True
             s_date = self.date_from.date().toString("yyyy-MM-dd")
             e_date = self.date_to.date().toString("yyyy-MM-dd")
             store_id = self.store_combo.currentData() # None for All
@@ -766,7 +799,8 @@ class StatsPage(QWidget):
                     is_num = isinstance(val, (int, float, Decimal))
                     if is_num and any(x in key for x in ['sales', 'revenue', 'spent', 'price', 'profit']):
                          val = f"{float(val):,.2f}"
-                except: pass
+                except (TypeError, ValueError):
+                    pass
                 
                 item = QTableWidgetItem(str(val))
                 item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)

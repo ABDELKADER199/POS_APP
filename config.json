@@ -1,8 +1,8 @@
 {
     "database": {
-        "host": "localhost",
-        "user": "root",
-        "password": "123",
-        "database": "stocks"
+        "host": "HIDDEN",
+        "user": "HIDDEN",
+        "password": "HIDDEN",
+        "database": "HIDDEN"
     }
 }
